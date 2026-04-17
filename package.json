@@ -1,0 +1,41 @@
+{
+  "name": "mystt",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "turbo run format",
+    "validate": "pnpm lint && pnpm typecheck && pnpm test",
+    "compose:infra": "docker compose -f infra/docker/docker-compose.yml up -d postgres redis minio minio-init mailpit",
+    "compose:up": "docker compose -f infra/docker/docker-compose.yml up -d",
+    "compose:down": "docker compose -f infra/docker/docker-compose.yml down",
+    "smoke": "node scripts/smoke-check.js",
+    "insforge:check": "tsx scripts/insforge-phase1-check.ts",
+    "graphify:build": "./scripts/graphify-local.sh build",
+    "graphify:query": "./scripts/graphify-local.sh query",
+    "graphify:path": "./scripts/graphify-local.sh path",
+    "graphify:explain": "./scripts/graphify-local.sh explain",
+    "graphify:codex": "./scripts/graphify-local.sh codex-install",
+    "mobile:lan": "pnpm --filter @mystt/mobile dev:lan",
+    "mobile:tunnel": "pnpm --filter @mystt/mobile dev:tunnel",
+    "mobile:dev-client": "pnpm --filter @mystt/mobile dev:client"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

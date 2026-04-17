@@ -1,0 +1,16 @@
+{
+  auto_https off
+}
+
+app.localhost, {$APP_DOMAIN} {
+  reverse_proxy web:3000
+}
+
+api.localhost, {$API_DOMAIN} {
+  reverse_proxy api:4000
+}
+
+mail.localhost {
+  reverse_proxy mailpit:8025
+}
+

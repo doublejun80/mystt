@@ -1,0 +1,20 @@
+{
+  "name": "@mystt/worker-summarize",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup src/index.ts --format esm --dts",
+    "start": "tsx src/index.ts",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@mystt/audio-core": "workspace:*",
+    "@mystt/notes-schema": "workspace:*",
+    "@mystt/soniox-client": "workspace:*",
+    "@mystt/transcript-normalizer": "workspace:*"
+  }
+}

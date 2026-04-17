@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "quiet-room-2p",
+      "label": "조용한 회의실 2인 회의",
+      "targets": ["wer", "cer", "action-item precision"]
+    },
+    {
+      "id": "meeting-4p",
+      "label": "4인 회의",
+      "targets": ["speaker attribution", "decision recall"]
+    },
+    {
+      "id": "speech-60m",
+      "label": "강연 60분",
+      "targets": ["long-form stability", "section summary quality"]
+    },
+    {
+      "id": "cafe-noise",
+      "label": "카페 소음",
+      "targets": ["cer", "low-confidence token rate"]
+    },
+    {
+      "id": "ko-en-mix",
+      "label": "한영 혼용 회의",
+      "targets": ["language identification", "domain term fidelity"]
+    },
+    {
+      "id": "bluetooth-mic",
+      "label": "블루투스 이어폰 입력",
+      "targets": ["route stability", "drop detection"]
+    },
+    {
+      "id": "lockscreen-90m",
+      "label": "잠금 화면 90분 연속 녹음",
+      "targets": ["background survival", "chunk integrity"]
+    },
+    {
+      "id": "network-flap",
+      "label": "네트워크 끊김 복귀",
+      "targets": ["upload recovery", "realtime degrade gracefully"]
+    }
+  ]
+}
+

@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mystt Desktop</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <main class="desktop-shell">
+      <header class="app-toolbar">
+        <div class="app-toolbar-copy">
+          <strong id="app-status-title" class="app-toolbar-title">MYSTT Studio</strong>
+          <p id="app-status-detail" class="app-toolbar-detail">Connecting live workspace</p>
+        </div>
+
+        <div class="app-toolbar-actions">
+          <span id="status-pill" class="pill">점검 중</span>
+          <button id="reload-portal" class="button" type="button">새로고침</button>
+          <button id="open-portal-settings" class="button" type="button">환경</button>
+          <button id="open-login" class="button button-primary" type="button">로그인</button>
+        </div>
+      </header>
+
+      <section class="portal-stage">
+        <div id="portal-loading" class="portal-state">
+          <p class="panel-label">포털 준비</p>
+          <h2>원래 메인 화면을 불러오는 중입니다.</h2>
+          <p class="status-detail">Next 포털이 아직 켜지지 않았으면 잠시 뒤 다시 시도합니다.</p>
+        </div>
+
+        <iframe
+          id="portal-frame"
+          class="portal-frame"
+          title="mystt portal"
+          allow="microphone; clipboard-read; clipboard-write"
+          hidden
+        ></iframe>
+
+        <section id="portal-fallback" class="fallback-card" hidden>
+          <p class="panel-label">포털 연결 실패</p>
+          <h2>메인 포털이 아직 응답하지 않습니다.</h2>
+          <p class="status-detail">
+            API와 웹 포털을 먼저 켠 뒤 다시 시도하거나, 아래 대상 중 하나를 직접 열 수 있습니다.
+          </p>
+          <div class="platform-list" id="target-list"></div>
+          <div class="button-row">
+            <button id="open-local" class="button button-primary" type="button">Studio 열기</button>
+            <button id="open-prod" class="button" type="button">운영 도메인 열기</button>
+            <button id="open-health" class="button" type="button">API 헬스체크</button>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="settings-overlay" class="settings-overlay" hidden>
+      <section class="settings-sheet" aria-modal="true" role="dialog" aria-labelledby="settings-title">
+        <div class="settings-header">
+          <div>
+            <p class="panel-label">설정</p>
+            <h2 id="settings-title">로그인 및 계정</h2>
+            <p class="status-detail">
+              InsForge는 뒷단 연결용이고, 여기서는 로그인과 계정 상태만 먼저 다룹니다.
+            </p>
+          </div>
+          <button id="close-settings" class="button settings-close-button" type="button">
+            닫기
+          </button>
+        </div>
+
+        <div class="info-grid">
+          <section class="info-card">
+            <p class="panel-label">Desktop shell</p>
+            <div class="metric-grid" id="desktop-shell-summary"></div>
+          </section>
+
+          <section class="info-card">
+            <p class="panel-label">Recorder 생존 상태</p>
+            <div class="metric-grid" id="desktop-recorder-summary"></div>
+            <ul class="checklist" id="desktop-recorder-checklist"></ul>
+            <div class="button-row">
+              <button id="desktop-recorder-clear-runtime" class="button" type="button">
+                복구 흔적 정리
+              </button>
+            </div>
+          </section>
+
+          <section class="info-card">
+            <p class="panel-label">장시간 녹음 보호</p>
+            <div class="status-row">
+              <div>
+                <h3 id="desktop-keep-awake-title">노트북 장시간 보호 상태 확인 중</h3>
+                <p id="desktop-keep-awake-detail" class="status-detail">
+                  macOS에서는 caffeinate 기반으로 절전을 막는 보호 레인을 사용합니다.
+                </p>
+              </div>
+              <span id="desktop-keep-awake-pill" class="pill">점검 중</span>
+            </div>
+            <div class="button-row">
+              <button id="desktop-keep-awake-start" class="button button-primary" type="button">
+                보호 켜기
+              </button>
+              <button id="desktop-keep-awake-stop" class="button" type="button">
+                보호 끄기
+              </button>
+            </div>
+          </section>
+
+          <section class="info-card">
+            <p class="panel-label">계정</p>
+            <form id="insforge-login-form" class="settings-form">
+              <label class="settings-field">
+                <span>이름</span>
+                <input id="insforge-name" name="name" type="text" autocomplete="name" />
+              </label>
+              <label class="settings-field">
+                <span>이메일</span>
+                <input id="insforge-email" name="email" type="email" autocomplete="email" />
+              </label>
+              <label class="settings-field">
+                <span>비밀번호</span>
+                <input
+                  id="insforge-password"
+                  name="password"
+                  type="password"
+                  autocomplete="current-password"
+                />
+              </label>
+              <div class="button-row">
+                <button class="button button-primary" type="submit">로그인</button>
+                <button id="insforge-sign-up" class="button" type="button">계정 만들기</button>
+                <button id="insforge-logout" class="button" type="button">로그아웃</button>
+              </div>
+            </form>
+            <p id="insforge-login-message" class="status-detail">로그인 전입니다.</p>
+          </section>
+
+          <section class="info-card">
+            <p class="panel-label">현재 세션</p>
+            <div class="metric-grid" id="session-summary"></div>
+            <ul class="checklist" id="session-checklist"></ul>
+          </section>
+        </div>
+
+        <details id="insforge-diagnostics" class="diagnostics-panel">
+          <summary class="diagnostics-summary">
+            <div>
+              <p class="panel-label">개발자용</p>
+              <strong>InsForge 상태와 스토리지 보기</strong>
+            </div>
+            <span id="insforge-pill" class="pill">점검 중</span>
+          </summary>
+
+          <section class="info-card settings-stack diagnostics-body">
+            <div class="status-row">
+              <div>
+                <p class="panel-label">InsForge 상태</p>
+                <h3 id="insforge-title">InsForge 연결 확인 중</h3>
+                <p id="insforge-detail" class="status-detail">
+                  API bridge, public auth config, storage bucket 상태를 함께 확인합니다.
+                </p>
+              </div>
+            </div>
+
+            <div class="metric-grid" id="insforge-status-summary"></div>
+            <div class="platform-list" id="insforge-buckets"></div>
+
+            <section class="info-card nested-card">
+              <p class="panel-label">포털 대상</p>
+              <div class="platform-list" id="settings-target-list"></div>
+            </section>
+
+            <div class="button-row">
+              <button id="open-insforge-dashboard" class="button button-primary" type="button">
+                InsForge 대시보드 열기
+              </button>
+              <button id="open-insforge-auth" class="button" type="button">인증 설정 열기</button>
+              <button id="ensure-insforge-buckets" class="button" type="button">버킷 보장</button>
+              <button id="refresh-insforge" class="button" type="button">상태 새로고침</button>
+              <button id="verify-insforge-session" class="button" type="button">세션 확인</button>
+            </div>
+          </section>
+        </details>
+      </section>
+    </div>
+  </body>
+</html>

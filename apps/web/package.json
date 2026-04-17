@@ -1,0 +1,22 @@
+{
+  "name": "@mystt/web",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "sh -lc 'next dev -H ${WEB_HOST:-0.0.0.0} -p ${WEB_PORT:-3200}'",
+    "build": "next build",
+    "start": "sh -lc 'next start -H ${WEB_HOST:-0.0.0.0} -p ${WEB_PORT:-3200}'",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@mystt/audio-core": "workspace:*",
+    "@mystt/insforge-bridge": "workspace:*",
+    "@mystt/ui-kit": "workspace:*",
+    "@soniox/client": "^1.0.2",
+    "next": "14.2.21",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

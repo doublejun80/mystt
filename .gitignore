@@ -1,0 +1,16 @@
+node_modules
+.turbo
+.expo
+.next
+dist
+coverage
+.data
+.DS_Store
+.env
+*.log
+tmp
+graphify-out
+.venv-graphify
+.graphify_analysis.json
+*.swp
+*.tsbuildinfo

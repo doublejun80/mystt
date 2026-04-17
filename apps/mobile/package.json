@@ -1,0 +1,38 @@
+{
+  "name": "@mystt/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "dev": "expo start --clear",
+    "dev:lan": "expo start --clear --host lan",
+    "dev:tunnel": "expo start --clear --tunnel",
+    "dev:client": "expo start --clear --dev-client --host lan",
+    "prebuild": "expo prebuild",
+    "prebuild:clean": "expo prebuild --clean",
+    "ios": "expo run:ios",
+    "ios:device": "expo run:ios --device",
+    "android": "expo run:android",
+    "android:device": "expo run:android --device",
+    "build": "expo export --platform web --output-dir dist",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.29.2",
+    "@mystt/audio-core": "workspace:*",
+    "@mystt/insforge-bridge": "workspace:*",
+    "@mystt/ui-kit": "workspace:*",
+    "expo": "~52.0.21",
+    "expo-audio": "~0.3.5",
+    "expo-constants": "~17.0.8",
+    "expo-dev-client": "~5.0.20",
+    "expo-file-system": "~18.0.12",
+    "expo-router": "~4.0.19",
+    "expo-status-bar": "~2.0.1",
+    "react": "18.3.1",
+    "react-native": "0.76.5",
+    "react-native-web": "~0.19.13"
+  }
+}

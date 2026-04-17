@@ -1,0 +1,201 @@
+services:
+  reverse-proxy:
+    image: caddy:2.8
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - api
+      - web
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mystt
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-56379}:6379"
+    volumes:
+      - redis-data:/data
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-19000}:9000"
+      - "${MINIO_CONSOLE_PORT:-19001}:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -lc "
+      mc alias set local http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin} &&
+      mc mb --ignore-existing local/${MINIO_BUCKET_AUDIO:-audio} &&
+      mc mb --ignore-existing local/${MINIO_BUCKET_ARTIFACTS:-artifacts}
+      "
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "${MAIL_SMTP_PORT:-11025}:1025"
+      - "${MAIL_WEB_PORT:-18025}:8025"
+
+  api:
+    image: node:22-alpine
+    working_dir: /workspace
+    env_file:
+      - ../../.env
+    environment:
+      API_PORT: 4000
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/mystt
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: http://minio:9000
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+    command: >
+      sh -lc "corepack enable &&
+      pnpm install &&
+      pnpm --filter @mystt/api dev"
+    volumes:
+      - ../../:/workspace
+    ports:
+      - "${API_PORT:-4100}:4000"
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
+  web:
+    image: node:22-alpine
+    working_dir: /workspace
+    env_file:
+      - ../../.env
+    command: >
+      sh -lc "corepack enable &&
+      pnpm install &&
+      pnpm --filter @mystt/web dev"
+    volumes:
+      - ../../:/workspace
+    ports:
+      - "${WEB_PORT:-3200}:3000"
+    depends_on:
+      - api
+
+  worker-transcribe:
+    image: node:22-alpine
+    working_dir: /workspace
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/mystt
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: http://minio:9000
+    command: >
+      sh -lc "corepack enable &&
+      pnpm install &&
+      while true; do pnpm --filter @mystt/worker-transcribe start; sleep 30; done"
+    volumes:
+      - ../../:/workspace
+    depends_on:
+      - api
+      - redis
+
+  worker-session:
+    image: node:22-alpine
+    working_dir: /workspace
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/mystt
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: http://minio:9000
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+    command: >
+      sh -lc "corepack enable &&
+      pnpm install &&
+      pnpm --filter @mystt/worker-session start"
+    volumes:
+      - ../../:/workspace
+    depends_on:
+      - api
+      - redis
+
+  worker-summarize:
+    image: node:22-alpine
+    working_dir: /workspace
+    env_file:
+      - ../../.env
+    environment:
+      POSTGRES_URL: postgresql://postgres:postgres@postgres:5432/mystt
+      REDIS_URL: redis://redis:6379
+      MINIO_ENDPOINT: http://minio:9000
+    command: >
+      sh -lc "corepack enable &&
+      pnpm install &&
+      while true; do pnpm --filter @mystt/worker-summarize start; sleep 30; done"
+    volumes:
+      - ../../:/workspace
+    depends_on:
+      - api
+      - redis
+
+  worker-mail:
+    image: node:22-alpine
+    working_dir: /workspace
+    env_file:
+      - ../../.env
+    environment:
+      MAIL_HOST: mailpit
+      MAIL_PORT: 1025
+    command: >
+      sh -lc "corepack enable &&
+      pnpm install &&
+      while true; do pnpm --filter @mystt/worker-mail start; sleep 30; done"
+    volumes:
+      - ../../:/workspace
+    depends_on:
+      - api
+      - mailpit
+
+  portainer:
+    image: portainer/portainer-ce:2.21.5
+    restart: unless-stopped
+    ports:
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  redis-data:
+  minio-data:
+  portainer-data:
