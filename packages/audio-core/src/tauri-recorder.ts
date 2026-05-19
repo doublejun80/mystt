@@ -18,6 +18,10 @@ export interface TauriRecorderPersistedSessionEntry {
   operationLog: string[];
   remoteSessionId?: string;
   remoteFileId?: string;
+  localSha256?: string | null;
+  remoteSha256?: string;
+  remoteByteLength?: number;
+  uploadVerifiedAt?: string;
   uploadQueuedAt?: string;
   checksumMd5: string | null;
   sessionJsonPath: string;
@@ -39,4 +43,3 @@ export interface TauriRecorderStoreStatus {
   runtimeState: RecorderRuntimeState | null;
   recentSessions: TauriRecorderPersistedSessionEntry[];
 }
-

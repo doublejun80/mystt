@@ -9,6 +9,7 @@ const auditKindLabels: Record<string, string> = {
   "session.process.finished": "처리 완료",
   "session.process.failed": "처리 실패",
   "source_audio.staged": "원본 오디오 저장",
+  "source_audio.verified": "원본 오디오 검증",
   "source_audio.stage_failed": "원본 오디오 저장 실패",
   "transcription.metadata.updated": "전사 메타데이터 갱신",
   "transcript.artifacts.saved": "전사 아티팩트 저장",

@@ -63,15 +63,23 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100%;
+  background-color: var(--page-start);
   color: var(--ink);
   font-family: "Apple SD Gothic Neo", "Noto Sans KR", var(--font-body), sans-serif;
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
   line-height: 1.5;
+  min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(circle at top, rgba(113, 112, 255, 0.14), transparent 30%),
     linear-gradient(180deg, var(--page-start) 0%, var(--page-end) 100%);
+  background-color: var(--page-start);
 }
 
 a {
@@ -89,12 +97,91 @@ textarea {
 .pageShell {
   width: min(1360px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 18px 0 48px;
+  padding: calc(18px + env(safe-area-inset-top)) 0 calc(48px + env(safe-area-inset-bottom));
 }
 
 .pageShellEmbedded {
   width: min(1400px, calc(100vw - 20px));
-  padding-top: 10px;
+  padding-top: calc(10px + env(safe-area-inset-top));
+}
+
+.authShell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding:
+    calc(24px + env(safe-area-inset-top))
+    24px
+    calc(24px + env(safe-area-inset-bottom));
+}
+
+.authPanel {
+  width: min(460px, 100%);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 18px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  padding: 24px;
+}
+
+.authForm {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.authInput {
+  min-height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #f8fafc;
+  padding: 0 14px;
+  outline: none;
+}
+
+.authInput:focus {
+  border-color: rgba(113, 112, 255, 0.7);
+}
+
+.authButton {
+  width: 100%;
+}
+
+.authError {
+  margin: 0;
+  color: var(--danger-ink);
+  font-weight: 700;
+}
+
+.shortcutsInstallPanel {
+  max-width: 560px;
+}
+
+.shortcutInstallList {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.shortcutInstallCard {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.shortcutInstallCard strong {
+  font-size: 15px;
+}
+
+.shortcutInstallCard span {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .desktopShellPage {
@@ -131,10 +218,14 @@ textarea {
 }
 
 .appHeader {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 560px);
   gap: 16px;
   align-items: center;
+}
+
+.appHeaderIntro {
+  min-width: 0;
 }
 
 .brandLabel,
@@ -178,11 +269,42 @@ textarea {
   color: var(--muted);
 }
 
+.storySummary {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  max-width: 72ch;
+}
+
+.storySummaryCompact {
+  margin-top: 12px;
+}
+
+.storySummaryLabel {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #dbe2f6;
+}
+
+.storySummaryParagraph {
+  margin: 0;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1.75;
+  word-break: keep-all;
+}
+
 .headerTools {
   display: grid;
   gap: 12px;
   justify-items: end;
-  width: min(380px, 100%);
+  width: min(560px, 100%);
+}
+
+.appHeader > .settingsPanel {
+  grid-column: 1 / -1;
 }
 
 .statusCluster,
@@ -194,6 +316,33 @@ textarea {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.toolbarActions {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+
+.toolbarIcon {
+  display: none;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.toolbarLabel {
+  display: inline;
+}
+
+.historyHeaderActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.historyToggleButton {
+  min-height: 34px;
 }
 
 .statusChip,
@@ -311,6 +460,10 @@ textarea {
 
 .sectionCard {
   padding: 16px;
+}
+
+.recorderCard {
+  display: grid;
 }
 
 .settingsPanel {
@@ -493,6 +646,7 @@ textarea {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+  order: 1;
 }
 
 .recorderFieldWide {
@@ -508,6 +662,7 @@ textarea {
   grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.7fr);
   gap: 16px;
   align-items: start;
+  order: 2;
 }
 
 .recorderControls,
@@ -582,6 +737,125 @@ textarea {
   border: 1px solid var(--line);
 }
 
+.focusShortcutPanel {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.focusShortcutHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.focusShortcutToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #dfe5f5;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.focusShortcutToggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.focusShortcutActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.focusShortcutActions .ghostButton {
+  min-width: 0;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 8px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.focusShortcutWarning {
+  color: #f5c16c;
+}
+
+.archiveRecoveryPanel {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.archiveRecoveryHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.archiveRecoveryRefresh {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.archiveRecoveryList {
+  display: grid;
+  gap: 8px;
+}
+
+.archiveRecoveryItem {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.archiveRecoveryItem strong {
+  color: #f6f8ff;
+  font-size: 13px;
+}
+
+.archiveRecoveryItem span,
+.archiveRecoveryItem p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.archiveRecoveryActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.archiveRecoveryActions .ghostButton {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.modalCardNarrow {
+  max-width: 520px;
+}
+
+.modalHeaderActions,
+.modalFooterActions {
+  justify-content: flex-end;
+}
+
 .recordActions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -591,6 +865,10 @@ textarea {
 .recordActions .ghostButton,
 .recordActions .recordButton {
   width: 100%;
+}
+
+.recordLabelShort {
+  display: none;
 }
 
 .recordLabel {
@@ -686,6 +964,13 @@ textarea {
   margin: 0;
 }
 
+.transcriptTranslation {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
 .transcriptToken {
   white-space: pre-wrap;
 }
@@ -720,11 +1005,13 @@ textarea {
   display: grid;
   gap: 14px;
   align-content: start;
+  order: 2;
   position: sticky;
   top: 16px;
 }
 
 .workspaceSurface {
+  order: 1;
   min-height: 720px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -853,6 +1140,11 @@ textarea {
   font-size: 20px;
   line-height: 1.55;
   letter-spacing: -0.02em;
+}
+
+.summaryLeadGroup {
+  display: grid;
+  gap: 10px;
 }
 
 .summaryGrid {
@@ -1065,6 +1357,42 @@ textarea {
   gap: 8px;
 }
 
+.insightList {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.insightItem {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  padding-left: 22px;
+  color: #e5ebf8;
+  line-height: 1.65;
+  word-break: keep-all;
+}
+
+.insightItem::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.75em;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #dce6ff;
+  box-shadow: 0 0 0 4px rgba(220, 230, 255, 0.08);
+}
+
+.insightItem small {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .detailLayout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1155,11 +1483,25 @@ textarea {
   }
 
   .headerTools {
-    justify-items: stretch;
+    justify-items: end;
+    width: auto;
+  }
+
+  .toolbarActions {
+    flex-wrap: nowrap;
   }
 
   .recorderFieldWide {
     grid-column: span 6;
+  }
+
+  .recorderTopBar {
+    order: 1;
+  }
+
+  .recorderMain {
+    order: 2;
+    margin-bottom: 12px;
   }
 
   .workspaceHeader {
@@ -1168,6 +1510,14 @@ textarea {
 
   .workspaceTabs {
     justify-content: flex-start;
+  }
+
+  .recordSidebar {
+    order: 2;
+  }
+
+  .workspaceSurface {
+    order: 1;
   }
 
   .sessionRowShell {
@@ -1198,7 +1548,7 @@ textarea {
 @media (max-width: 640px) {
   .pageShell {
     width: min(100vw - 16px, 100%);
-    padding-top: 12px;
+    padding-top: calc(12px + env(safe-area-inset-top));
   }
 
   .appHeader,
@@ -1216,10 +1566,81 @@ textarea {
     padding: 16px;
   }
 
+  .appHeader {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+
+  .appHeader .appCopy {
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .appHeader .headerTools {
+    display: grid;
+    align-self: start;
+    justify-self: end;
+    width: auto;
+    gap: 0;
+  }
+
+  .appHeader .toolbarActions {
+    display: flex;
+    align-self: start;
+    justify-self: end;
+    gap: 6px;
+  }
+
+  .appHeader .settingsPanel {
+    grid-column: 1 / -1;
+    margin-top: 6px;
+  }
+
+  .appHeader .toolbarHint,
+  .appHeader .statusCluster {
+    display: none;
+  }
+
+  .appHeader .toolbarIconButton {
+    width: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    padding: 0;
+    border-radius: 10px;
+  }
+
+  .appHeader .toolbarIcon {
+    display: inline;
+  }
+
+  .appHeader .toolbarLabel {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .appTitle,
   .pageTitle,
   .sectionTitleLarge {
     font-size: 24px;
+  }
+
+  .storySummary {
+    max-width: none;
+  }
+
+  .storySummaryParagraph {
+    font-size: 15px;
+    line-height: 1.8;
   }
 
   .sessionRowSnippet {
@@ -1231,12 +1652,92 @@ textarea {
     justify-content: flex-start;
   }
 
-  .recordActions,
+  .historyHeaderActions {
+    display: grid;
+    justify-items: end;
+    gap: 6px;
+  }
+
+  .historyToggleButton {
+    min-width: 72px;
+    width: auto;
+  }
+
   .toolbarActions,
-  .buttonRow,
-  .workspaceTabs {
+  .buttonRow {
     display: grid;
     grid-template-columns: 1fr;
+  }
+
+  .workspaceTabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    width: 100%;
+  }
+
+  .workspaceTab {
+    min-width: 0;
+    min-height: 38px;
+    padding: 0 4px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .recordActions {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .recordActions .ghostButton,
+  .recordActions .recordButton {
+    min-width: 0;
+    min-height: 42px;
+    padding: 0 4px;
+    border-radius: 10px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .recordLabelFull {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .recordLabelShort {
+    display: inline;
+  }
+
+  .focusShortcutPanel,
+  .archiveRecoveryPanel {
+    order: 4;
+    padding-top: 10px;
+    padding-bottom: 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 0;
+  }
+
+  .recorderMain {
+    display: grid;
+    grid-template-columns: 1fr;
+    margin-bottom: 12px;
+  }
+
+  .recordSidebar {
+    order: 1;
+    position: static;
+  }
+
+  .workspaceSurface {
+    order: 2;
   }
 
   .recorderTopBar {

@@ -3,8 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PersistedApiState } from "./persistence";
 
 const persistenceMocks = vi.hoisted(() => ({
+  deletePersistedSessionFiles: vi.fn(),
+  deletePersistedSessionState: vi.fn(),
   loadPersistedApiState: vi.fn(),
-  persistApiState: vi.fn()
+  persistApiState: vi.fn(),
+  writeSessionSourceAudioFromFile: vi.fn()
 }));
 
 vi.mock("./persistence", async () => {
@@ -12,20 +15,29 @@ vi.mock("./persistence", async () => {
 
   return {
     ...actual,
+    deletePersistedSessionFiles: persistenceMocks.deletePersistedSessionFiles,
+    deletePersistedSessionState: persistenceMocks.deletePersistedSessionState,
     loadPersistedApiState: persistenceMocks.loadPersistedApiState,
-    persistApiState: persistenceMocks.persistApiState
+    persistApiState: persistenceMocks.persistApiState,
+    writeSessionSourceAudioFromFile: persistenceMocks.writeSessionSourceAudioFromFile
   };
 });
 
 import {
   applySonioxWebhook,
   createSession,
+  deleteSession,
+  findReusableSourceAudioUpload,
   getSessionIdByTranscriptionId,
   getSessionSnapshot,
   listAuditEvents,
   refreshStore,
+  recordSourceAudioUpload,
+  commitVerifiedSourceAudio,
   getStoredTranscription,
-  saveTranscriptionMetadata
+  saveTranscriptionMetadata,
+  updateSessionTitle,
+  writeSourceAudioCandidateFromFile
 } from "./store";
 
 function buildEmptyState(): PersistedApiState {
@@ -34,6 +46,7 @@ function buildEmptyState(): PersistedApiState {
     webhookFingerprints: [],
     sessionByTranscriptionId: {},
     transcriptionBySessionId: {},
+    sourceAudioUploadsBySessionId: {},
     normalizedTranscripts: {},
     rawTranscriptText: {},
     notesBySessionId: {},
@@ -45,8 +58,13 @@ function buildEmptyState(): PersistedApiState {
 describe("saveTranscriptionMetadata", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    persistenceMocks.deletePersistedSessionFiles.mockResolvedValue(undefined);
+    persistenceMocks.deletePersistedSessionState.mockResolvedValue(undefined);
     persistenceMocks.loadPersistedApiState.mockImplementation(async () => buildEmptyState());
     persistenceMocks.persistApiState.mockResolvedValue(undefined);
+    persistenceMocks.writeSessionSourceAudioFromFile.mockResolvedValue(
+      "/tmp/sess/source-deadbeef-source-audio.m4a"
+    );
     await refreshStore();
   });
 
@@ -97,6 +115,172 @@ describe("saveTranscriptionMetadata", () => {
     expect(getStoredTranscription(session.id)?.cleanupCompletedAt).toBe(
       "2026-04-17T09:30:00.000Z"
     );
+  });
+
+  it("deletes from local fallback state but keeps audio files when remote state deletion fails", async () => {
+    const session = await createSession({
+      title: "Delete Ordering",
+      mode: "meeting"
+    });
+    const failure = new Error("postgres unavailable");
+    persistenceMocks.deletePersistedSessionState.mockRejectedValueOnce(failure);
+    persistenceMocks.persistApiState.mockClear();
+
+    await expect(deleteSession(session.id)).resolves.toBe(true);
+
+    expect(persistenceMocks.persistApiState).toHaveBeenCalled();
+    expect(persistenceMocks.deletePersistedSessionFiles).not.toHaveBeenCalled();
+    expect(getSessionSnapshot(session.id)).toBeUndefined();
+  });
+
+  it("cleans persisted audio files only after session deletion is persisted", async () => {
+    const session = await createSession({
+      title: "Delete Files After State",
+      mode: "meeting"
+    });
+    persistenceMocks.persistApiState.mockClear();
+
+    await expect(deleteSession(session.id)).resolves.toBe(true);
+
+    expect(persistenceMocks.deletePersistedSessionState).toHaveBeenCalledWith(session.id);
+    expect(persistenceMocks.persistApiState).toHaveBeenCalled();
+    expect(persistenceMocks.deletePersistedSessionFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: session.id
+      })
+    );
+    const stateDeleteOrder =
+      persistenceMocks.deletePersistedSessionState.mock.invocationCallOrder[0];
+    const statePersistOrder = persistenceMocks.persistApiState.mock.invocationCallOrder[0];
+    const fileDeleteOrder =
+      persistenceMocks.deletePersistedSessionFiles.mock.invocationCallOrder[0];
+
+    expect(stateDeleteOrder).toBeDefined();
+    expect(statePersistOrder).toBeDefined();
+    expect(fileDeleteOrder).toBeDefined();
+    expect(stateDeleteOrder as number).toBeLessThan(statePersistOrder as number);
+    expect(statePersistOrder as number).toBeLessThan(fileDeleteOrder as number);
+    expect(getSessionSnapshot(session.id)).toBeUndefined();
+  });
+
+  it("audits saved title updates with previous and next titles", async () => {
+    const session = await createSession({
+      title: "Untitled quick recording",
+      mode: "meeting"
+    });
+
+    await updateSessionTitle(session.id, "고객 미팅");
+
+    expect(getSessionSnapshot(session.id)?.session.title).toBe("고객 미팅");
+    expect(
+      listAuditEvents({ sessionId: session.id }).find(
+        (event) => event.kind === "session.title.updated"
+      )?.payload
+    ).toMatchObject({
+      from: "Untitled quick recording",
+      to: "고객 미팅",
+      title: "고객 미팅"
+    });
+  });
+
+  it("persists reusable source audio upload ledger entries across refreshes", async () => {
+    const session = await createSession({
+      title: "Upload Ledger",
+      mode: "meeting"
+    });
+
+    await recordSourceAudioUpload({
+      sessionId: session.id,
+      sha256: "deadbeef",
+      byteLength: 12,
+      sourceLocation: "/tmp/source-audio.m4a",
+      sonioxFileId: "soniox-file-id",
+      sonioxFileName: "source-audio.m4a",
+      uploadedAt: "2026-04-18T01:23:45.000Z",
+      contentType: "audio/mp4",
+      sourceFileName: "source-audio.m4a"
+    });
+
+    expect(
+      findReusableSourceAudioUpload({
+        sessionId: session.id,
+        sha256: "deadbeef",
+        byteLength: 12
+      })
+    ).toMatchObject({
+      sonioxFileId: "soniox-file-id",
+      sourceLocation: "/tmp/source-audio.m4a"
+    });
+
+    const persistedState = persistenceMocks.persistApiState.mock.calls.at(-1)?.[0] as
+      | PersistedApiState
+      | undefined;
+    expect(persistedState?.sourceAudioUploadsBySessionId[session.id]).toEqual([
+      expect.objectContaining({
+        sha256: "deadbeef",
+        byteLength: 12,
+        sonioxFileId: "soniox-file-id"
+      })
+    ]);
+
+    persistenceMocks.loadPersistedApiState.mockImplementation(async () => persistedState ?? buildEmptyState());
+    await refreshStore();
+
+    expect(
+      findReusableSourceAudioUpload({
+        sessionId: session.id,
+        sha256: "deadbeef",
+        byteLength: 12
+      })?.sonioxFileId
+    ).toBe("soniox-file-id");
+  });
+
+  it("commits localAudioPath only after the persisted source audio is verified", async () => {
+    const session = await createSession({
+      title: "Verified Source Pointer",
+      mode: "meeting"
+    });
+    persistenceMocks.persistApiState.mockClear();
+
+    const location = await writeSourceAudioCandidateFromFile({
+      sessionId: session.id,
+      fileName: "source-deadbeef-source-audio.m4a",
+      filePath: "/tmp/staged/source-audio.m4a",
+      byteLength: 12,
+      sha256: "deadbeef",
+      contentType: "audio/mp4"
+    });
+
+    expect(location).toBe("/tmp/sess/source-deadbeef-source-audio.m4a");
+    expect(getSessionSnapshot(session.id)?.session.localAudioPath).toBe("");
+    const stagedState = persistenceMocks.persistApiState.mock.calls.at(-1)?.[0] as
+      | PersistedApiState
+      | undefined;
+    expect(
+      stagedState?.sessions.find((candidate) => candidate.id === session.id)?.localAudioPath
+    ).toBe("");
+
+    await expect(
+      commitVerifiedSourceAudio({
+        sessionId: session.id,
+        location,
+        fileName: "source-deadbeef-source-audio.m4a",
+        byteLength: 12,
+        sha256: "deadbeef",
+        contentType: "audio/mp4"
+      })
+    ).resolves.toBe(location);
+
+    expect(getSessionSnapshot(session.id)?.session.localAudioPath).toBe(location);
+    const committedState = persistenceMocks.persistApiState.mock.calls.at(-1)?.[0] as
+      | PersistedApiState
+      | undefined;
+    expect(
+      committedState?.sessions.find((candidate) => candidate.id === session.id)?.localAudioPath
+    ).toBe(location);
+    expect(
+      listAuditEvents({ sessionId: session.id }).map((event) => event.kind)
+    ).toEqual(expect.arrayContaining(["source_audio.staged", "source_audio.verified"]));
   });
 
   it("keeps the previous cleanupLastError when a later update does not include the field", async () => {

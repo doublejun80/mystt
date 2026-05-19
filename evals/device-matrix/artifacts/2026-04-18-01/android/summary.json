@@ -1,0 +1,17 @@
+{
+  "lane": "android",
+  "automated": {
+    "typecheckPassed": true,
+    "testPassed": true
+  },
+  "capturedFields": [],
+  "missingManualEvidence": [
+    "real Android model and OS version",
+    "foreground service survival capture with screen off",
+    "external mic input selection capture",
+    "battery optimization on-device capture",
+    "runtime-state.json path from real device",
+    "recordings/<session-id>/session.json path from real device"
+  ],
+  "status": "blocked"
+}

@@ -1,0 +1,4 @@
+{
+  "status": "stale",
+  "reason": "Historical browser process response captured before portal-safe presenter rollout. Current public response must not expose internal persistence paths."
+}

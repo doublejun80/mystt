@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 
 import "./globals.css";
@@ -12,6 +12,12 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "mystt Studio",
   description: "회의를 녹음하고 실시간 자막과 자동 요약으로 바로 정리합니다.",
+  applicationName: "mystt Studio",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "mystt"
+  },
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },
@@ -19,6 +25,14 @@ export const metadata: Metadata = {
     ],
     apple: [{ url: "/apple-icon.png", type: "image/png" }]
   }
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#121327",
+  colorScheme: "dark"
 };
 
 export default function RootLayout({

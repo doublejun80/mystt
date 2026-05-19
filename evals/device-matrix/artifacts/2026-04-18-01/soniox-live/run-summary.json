@@ -1,0 +1,24 @@
+{
+  "lane": "soniox-live",
+  "runId": "2026-04-18-01",
+  "status": "stale",
+  "reason": "This artifact set predates the portal-safe response contract and still captured legacy InsForge-related evidence. Keep only for historical debugging, not as current pass evidence.",
+  "staleArtifacts": [
+    "health.json",
+    "upload-response.json",
+    "process-response.json",
+    "session-after-process.json",
+    "cleanup-response.json"
+  ],
+  "stillUsefulArtifacts": [
+    "audit-events-before-cleanup.json",
+    "audit-events-after-cleanup.json",
+    "create-session.json",
+    "session-id.txt"
+  ],
+  "replacementEvidence": [
+    "services/api/src/routes/uploads.test.ts",
+    "services/api/src/routes/sessions.test.ts"
+  ],
+  "nextStep": "Run a fresh live slice and replace this directory if live credentials and infra are available."
+}

@@ -2,8 +2,6 @@
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 
-import type { SessionStatus } from "@mystt/audio-core";
-
 import {
   deletePortalSession,
   fetchApiHealth,
@@ -11,36 +9,49 @@ import {
   getSessionArtifactHref,
   getSessionSourceAudioHref,
   sendSessionShareEmail,
+  updatePortalSessionTitle,
   type ApiHealth
 } from "../lib/api";
 import {
-  getDownloadFileNameFromPath,
   resolveDesktopDownloadUrl
 } from "../lib/desktop-download";
 import {
   decorateSessionRecord,
   type SessionPortalRecord
 } from "../lib/demo-data";
+import {
+  describePortalStorageState,
+  hasPortalSourceAudio,
+  hasReadyPortalArtifact
+} from "../lib/session-assets";
 import { formatKoreanTime } from "../lib/format";
+import {
+  cleanUserFacingText,
+  splitUserFacingStoryParagraphs
+} from "../lib/user-facing-text";
 import {
   defaultRecorderPreferences,
   endpointDelayOptions,
   portalThemeOptions,
+  type PortalTheme,
   type RecorderPreferences
 } from "../lib/recorder-settings";
+import {
+  activePortalSessionStatuses,
+  hasActivePortalSession
+} from "../lib/session-polling";
 import { filterVisiblePortalSessions } from "../lib/session-visibility";
 import { LiveRecorder } from "./live-recorder";
 import { SessionRow } from "./session-row";
 
-const activeStatuses: SessionStatus[] = [
-  "recording",
-  "uploading",
-  "transcribing",
-  "summarizing",
-  "emailing"
-];
+const activeSessionRefreshIntervalMs = 10_000;
 const preferencesStorageKey = "mystt.portal.preferences";
 const shareRecipientsStorageKey = "mystt.portal.shareRecipients";
+const portalThemeColorById: Record<PortalTheme, string> = {
+  sand: "#121327",
+  sage: "#05100c",
+  sky: "#050913"
+};
 const defaultShareSelection = {
   includeSummary: true,
   includeDetails: true,
@@ -48,6 +59,35 @@ const defaultShareSelection = {
 };
 
 type ShareSelection = typeof defaultShareSelection;
+
+function buildTitleBasedAudioFileName(title: string) {
+  const safeTitle = title
+    .trim()
+    .replace(/[^\w.\-가-힣]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+  return `${safeTitle || "mystt-recording"}.mp3`;
+}
+
+function StorySummary({ value }: { value: string }) {
+  const paragraphs = splitUserFacingStoryParagraphs(value);
+
+  if (paragraphs.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="storySummary storySummaryCompact" aria-label="줄거리">
+      <p className="storySummaryLabel">줄거리</p>
+      {paragraphs.map((paragraph) => (
+        <p key={paragraph} className="storySummaryParagraph">
+          {paragraph}
+        </p>
+      ))}
+    </section>
+  );
+}
 
 function sortSessions(records: SessionPortalRecord[]) {
   return [...records].sort(
@@ -60,11 +100,7 @@ function resolveArtifactHref(
   session: SessionPortalRecord,
   kind: "clean_transcript_md" | "meeting_notes_docx"
 ) {
-  const artifact = session.artifacts.find(
-    (item) => item.kind === kind && item.status === "ready"
-  );
-
-  if (!artifact?.location) {
+  if (!hasReadyPortalArtifact(session, kind)) {
     return null;
   }
 
@@ -93,6 +129,7 @@ export function SessionHarness({
   const [error, setError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
   const [visibleCount, setVisibleCount] = useState(8);
+  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(false);
   const [preferences, setPreferences] = useState<RecorderPreferences>(
     defaultRecorderPreferences
   );
@@ -103,6 +140,9 @@ export function SessionHarness({
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
+  const [titleEditSessionId, setTitleEditSessionId] = useState<string | null>(null);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [savingTitleSessionId, setSavingTitleSessionId] = useState<string | null>(null);
   const [shareSessionId, setShareSessionId] = useState<string | null>(null);
   const [shareSelection, setShareSelection] = useState<ShareSelection>(
     defaultShareSelection
@@ -144,6 +184,39 @@ export function SessionHarness({
     }
   }, []);
 
+  const refreshWorkspacePreservingSessions = useCallback(async () => {
+    setIsRefreshing(true);
+
+    try {
+      const [healthPayload, sessionPayload] = await Promise.all([
+        fetchApiHealth(),
+        fetchPortalSessions()
+      ]);
+      const decorated = sortSessions(
+        filterVisiblePortalSessions(
+          sessionPayload.map((snapshot) =>
+            decorateSessionRecord(snapshot.session, snapshot.notes?.notes)
+          )
+        )
+      );
+
+      setHealth(healthPayload);
+      setSessions(decorated);
+      setError(null);
+      return true;
+    } catch (loadError) {
+      setHealth(null);
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "최근 기록을 불러오지 못했습니다."
+      );
+      return false;
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (initialSessions && initialSessions.length > 0) {
       return;
@@ -151,6 +224,25 @@ export function SessionHarness({
 
     void loadWorkspace();
   }, [initialSessions, loadWorkspace]);
+
+  const hasActiveSessions = useMemo(
+    () => hasActivePortalSession(sessions),
+    [sessions]
+  );
+
+  useEffect(() => {
+    if (!hasActiveSessions) {
+      return;
+    }
+
+    const interval = window.setInterval(() => {
+      void refreshWorkspacePreservingSessions();
+    }, activeSessionRefreshIntervalMs);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [hasActiveSessions, refreshWorkspacePreservingSessions]);
 
   useEffect(() => {
     function onPortalCommand(event: MessageEvent) {
@@ -209,6 +301,14 @@ export function SessionHarness({
 
     window.localStorage.setItem(preferencesStorageKey, JSON.stringify(preferences));
     document.documentElement.dataset.theme = preferences.theme;
+    const themeColor = portalThemeColorById[preferences.theme] ?? portalThemeColorById.sand;
+    let themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!themeColorMeta) {
+      themeColorMeta = document.createElement("meta");
+      themeColorMeta.name = "theme-color";
+      document.head.appendChild(themeColorMeta);
+    }
+    themeColorMeta.content = themeColor;
   }, [preferences]);
 
   useEffect(() => {
@@ -289,16 +389,20 @@ export function SessionHarness({
     () => sessions.find((session) => session.id === shareSessionId) ?? null,
     [shareSessionId, sessions]
   );
+  const titleEditSession = useMemo(
+    () => sessions.find((session) => session.id === titleEditSessionId) ?? null,
+    [titleEditSessionId, sessions]
+  );
 
   const activeCount = sessions.filter((session) =>
-    activeStatuses.includes(session.status)
+    activePortalSessionStatuses.includes(session.status)
   ).length;
   const completedCount = sessions.filter(
     (session) => session.status === "completed"
   ).length;
   const autoSummaryReady =
     health?.providers?.sonioxConfigured && health?.providers?.openaiConfigured;
-  const storageReady = health?.persistence?.postgres.mode === "remote";
+  const storageState = describePortalStorageState(health);
   const selectedReadyArtifactCount = selectedSession
     ? selectedSession.artifacts.filter((artifact) => artifact.status === "ready").length
     : 0;
@@ -350,29 +454,33 @@ export function SessionHarness({
   }, []);
 
   function hasDownloadableAudio(session: SessionPortalRecord) {
-    return (
-      session.localAudioPath.startsWith("minio://") ||
-      session.localAudioPath.startsWith("/") ||
-      /^[A-Za-z]:\\/.test(session.localAudioPath)
-    );
+    return hasPortalSourceAudio(session);
   }
 
   function buildShareDraft(session: SessionPortalRecord, selection: ShareSelection) {
     const transcriptHref = resolveArtifactHref(session, "clean_transcript_md");
     const notesDocxHref = resolveArtifactHref(session, "meeting_notes_docx");
+    const modeLabel =
+      session.mode === "meeting"
+        ? "회의"
+        : session.mode === "speech"
+          ? "발표"
+          : session.mode === "interview"
+            ? "인터뷰"
+            : session.mode;
     const bodyLines = [
       `[mystt] ${session.title}`,
-      `모드: ${session.mode}`,
-      `기록 시각: ${session.startedAt}`
+      `모드: ${modeLabel}`,
+      `기록 시각: ${formatKoreanTime(session.startedAt)}`
     ];
 
     if (selection.includeSummary) {
       bodyLines.push("", "요약");
-      bodyLines.push(session.summary || "요약이 아직 없습니다.");
+      bodyLines.push(cleanUserFacingText(session.summary) || "요약이 아직 없습니다.");
       bodyLines.push("", "핵심 정리");
       bodyLines.push(
         ...(session.decisions.length > 0
-          ? session.decisions.map((item) => `- ${item}`)
+          ? session.decisions.map((item) => `- ${cleanUserFacingText(item)}`)
           : ["- 없음"])
       );
       bodyLines.push("", "다음 할 일");
@@ -380,7 +488,7 @@ export function SessionHarness({
         ...(session.actionItems.length > 0
           ? session.actionItems.map(
               (item) =>
-                `- ${item.task}${item.owner ? ` / ${item.owner}` : ""}${item.dueDate ? ` / ${item.dueDate}` : ""}`
+                `- ${cleanUserFacingText(item.task)}${item.owner ? ` / ${cleanUserFacingText(item.owner)}` : ""}${item.dueDate ? ` / ${cleanUserFacingText(item.dueDate)}` : ""}`
             )
           : ["- 없음"])
       );
@@ -388,7 +496,6 @@ export function SessionHarness({
 
     if (selection.includeDetails) {
       bodyLines.push("", "상세 내역");
-      bodyLines.push(`세션 ID: ${session.id}`);
       bodyLines.push(`프로젝트: ${session.projectKey ?? "개인 기록"}`);
       bodyLines.push(`원문 첨부: ${transcriptHref ? "포함 예정" : "없음"}`);
       bodyLines.push(`회의록 첨부: ${notesDocxHref ? "포함 예정" : "없음"}`);
@@ -564,14 +671,14 @@ export function SessionHarness({
       return;
     }
 
-    const fileName = getDownloadFileNameFromPath(
-      session.localAudioPath,
-      `${session.title}.audio`
-    );
+    const mp3FileName = buildTitleBasedAudioFileName(session.title);
+    const sourceAudioDownloadHref = getSessionSourceAudioHref(session.id, {
+      format: "mp3"
+    });
     const desktopDownloadUrl =
       typeof window !== "undefined"
         ? resolveDesktopDownloadUrl(
-            getSessionSourceAudioHref(session.id),
+            sourceAudioDownloadHref,
             window.location.href
           )
         : null;
@@ -586,17 +693,18 @@ export function SessionHarness({
         {
           type: "mystt.desktop.download-file",
           url: desktopDownloadUrl,
-          fileName,
+          fileName: mp3FileName,
+          targetFormat: "original",
           sessionTitle: session.title
         },
         "*"
       );
-      setActionMessage(`"${session.title}" 음성 파일을 Downloads 폴더에 저장하는 중입니다.`);
+      setActionMessage(`"${session.title}" 음성 파일을 Downloads 폴더에 mp3로 저장하는 중입니다.`);
       return;
     }
 
     try {
-      const response = await fetch(getSessionSourceAudioHref(session.id), {
+      const response = await fetch(sourceAudioDownloadHref, {
         cache: "no-store"
       });
 
@@ -609,7 +717,7 @@ export function SessionHarness({
       const link = document.createElement("a");
 
       link.href = href;
-      link.download = fileName;
+      link.download = mp3FileName;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -635,17 +743,74 @@ export function SessionHarness({
     setPendingDeleteSessionId(null);
     setActionMessage(null);
 
+    const previousSessions = sessions;
     try {
+      setSessions((current) => current.filter((item) => item.id !== session.id));
       await deletePortalSession(session.id);
       setSelectedSessionId(null);
-      await loadWorkspace();
+      void refreshWorkspacePreservingSessions().then((refreshed) => {
+        if (!refreshed) {
+          setActionMessage(
+            `"${session.title}" 기록을 삭제했습니다. 목록 새로고침은 잠시 후 다시 시도해 주세요.`
+          );
+        }
+      });
       setActionMessage(`"${session.title}" 기록을 삭제했습니다.`);
     } catch (error) {
+      setSessions(previousSessions);
       setActionMessage(
         error instanceof Error ? error.message : "기록 삭제에 실패했습니다."
       );
     } finally {
       setDeletingSessionId(null);
+    }
+  }
+
+  function openTitleEditor(session: SessionPortalRecord) {
+    setTitleEditSessionId(session.id);
+    setTitleDraft(session.title);
+    setActionMessage(null);
+  }
+
+  async function handleSaveSessionTitle() {
+    const session = titleEditSession;
+    const nextTitle = titleDraft.trim();
+
+    if (!session || !nextTitle) {
+      return;
+    }
+
+    setSavingTitleSessionId(session.id);
+
+    try {
+      const snapshot = await updatePortalSessionTitle({
+        sessionId: session.id,
+        title: nextTitle
+      });
+      const decorated = decorateSessionRecord(snapshot.session, snapshot.notes?.notes);
+
+      setSessions((current) =>
+        sortSessions(current.map((item) => (item.id === decorated.id ? decorated : item)))
+      );
+      setTitleEditSessionId(null);
+      setActionMessage(`"${nextTitle}" 제목으로 저장했습니다.`);
+    } catch (error) {
+      setActionMessage(
+        error instanceof Error ? error.message : "제목 저장에 실패했습니다."
+      );
+    } finally {
+      setSavingTitleSessionId(null);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await fetch("/v1/auth/logout", {
+        method: "POST",
+        cache: "no-store"
+      });
+    } finally {
+      window.location.assign("/login");
     }
   }
 
@@ -731,7 +896,7 @@ export function SessionHarness({
         <label className="settingToggle">
           <div className="settingCopy">
             <strong>실시간 한국어 번역</strong>
-            <span>영어 발화가 들어오면 한국어 기준으로 자막을 보여 줍니다.</span>
+            <span>원문 자막은 그대로 두고, 한국어 번역은 보조 줄로만 보여 줍니다.</span>
           </div>
           <input
             type="checkbox"
@@ -778,7 +943,7 @@ export function SessionHarness({
         </div>
 
         <label className="fieldGroup settingField">
-          <span className="fieldLabel">Context terms</span>
+          <span className="fieldLabel">맥락 용어</span>
           <textarea
             className="textField settingTextarea"
             value={preferences.contextTermsText}
@@ -846,15 +1011,6 @@ export function SessionHarness({
                 <span>{health?.persistence?.minio.mode ?? "확인 중"}</span>
               </div>
             </div>
-
-            <div className="settingCard">
-              <div className="settingCopy">
-                <strong>InsForge shadow write</strong>
-                <span>
-                  {health?.integrations?.insforge?.shadowWriteEnabled ? "켜짐" : "꺼짐"}
-                </span>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -868,7 +1024,7 @@ export function SessionHarness({
           <section className="embeddedStatusBar">
             <div className="statusCluster">
               <span className="statusChip">
-                {storageReady ? "클라우드 저장 연결됨" : "로컬 저장으로 동작 중"}
+                {storageState.label}
               </span>
               <span className="statusChip">
                 {autoSummaryReady ? "자동 요약 준비됨" : "자동 요약 연결 확인 필요"}
@@ -884,12 +1040,9 @@ export function SessionHarness({
         </>
       ) : (
         <section className="appHeader">
-          <div>
+          <div className="appHeaderIntro">
             <p className="brandLabel">mystt</p>
             <h1 className="appTitle">회의 녹음</h1>
-            <p className="appCopy">
-              실시간 자막, 회의 요약, 전체 대화 편집을 한 화면에서 바로 처리합니다.
-            </p>
           </div>
 
           <div className="headerTools">
@@ -901,24 +1054,44 @@ export function SessionHarness({
               ) : null}
               <button
                 type="button"
-                className="ghostButton ghostButtonSecondary"
+                className="ghostButton ghostButtonSecondary toolbarIconButton"
                 onClick={() => void loadWorkspace()}
                 disabled={isRefreshing}
+                aria-label={isRefreshing ? "새로고침 중" : "새로고침"}
+                title={isRefreshing ? "새로고침 중" : "새로고침"}
               >
-                {isRefreshing ? "새로고침 중..." : "새로고침"}
+                <span className="toolbarIcon" aria-hidden="true">↻</span>
+                <span className="toolbarLabel">{isRefreshing ? "새로고침 중..." : "새로고침"}</span>
               </button>
               <button
                 type="button"
-                className={isSettingsOpen ? "ghostButton settingsButtonActive" : "ghostButton"}
-                onClick={() => setIsSettingsOpen((current) => !current)}
+                className="ghostButton ghostButtonSecondary toolbarIconButton"
+                onClick={() => void handleLogout()}
+                aria-label="로그아웃"
+                title="로그아웃"
               >
-                환경
+                <span className="toolbarIcon" aria-hidden="true">⎋</span>
+                <span className="toolbarLabel">로그아웃</span>
+              </button>
+              <button
+                type="button"
+                className={
+                  isSettingsOpen
+                    ? "ghostButton settingsButtonActive toolbarIconButton"
+                    : "ghostButton toolbarIconButton"
+                }
+                onClick={() => setIsSettingsOpen((current) => !current)}
+                aria-label="환경"
+                title="환경"
+              >
+                <span className="toolbarIcon" aria-hidden="true">⚙</span>
+                <span className="toolbarLabel">환경</span>
               </button>
             </div>
 
             <div className="statusCluster">
               <span className="statusChip">
-                {storageReady ? "클라우드 저장 연결됨" : "로컬 저장으로 동작 중"}
+                {storageState.label}
               </span>
               <span className="statusChip">
                 {autoSummaryReady ? "자동 요약 준비됨" : "자동 요약 연결 확인 필요"}
@@ -927,8 +1100,9 @@ export function SessionHarness({
               <span className="statusChip">완료 {completedCount}</span>
             </div>
 
-            {settingsPanel}
           </div>
+
+          {settingsPanel}
         </section>
       )}
 
@@ -970,58 +1144,73 @@ export function SessionHarness({
               <p className="sectionEyebrow">최근 기록</p>
               <h2 className="sectionTitleLarge">최근 기록</h2>
             </div>
-            <span className="sectionMeta">
-              {visibleSessions.length}/{filteredSessions.length}개 표시 중
-            </span>
+            <div className="historyHeaderActions">
+              <span className="sectionMeta">
+                {visibleSessions.length}/{filteredSessions.length}개 표시 중
+              </span>
+              <button
+                type="button"
+                className="ghostButton ghostButtonSecondary historyToggleButton"
+                onClick={() => setIsHistoryCollapsed((current) => !current)}
+                aria-expanded={!isHistoryCollapsed}
+              >
+                {isHistoryCollapsed ? "펼치기" : "접기"}
+              </button>
+            </div>
           </div>
 
-          <label className="fieldGroup">
-            <span className="fieldLabel">검색</span>
-            <input
-              className="textField"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="제목, 프로젝트, 상태로 찾기"
-            />
-          </label>
-
-          <div className="sessionList sessionListCompact">
-            {visibleSessions.length > 0 ? (
-              visibleSessions.map((session) => (
-                <SessionRow
-                  key={session.id}
-                  session={session}
-                  detailHref={
-                    isDesktopShell
-                      ? `/sessions/${session.id}?desktop_shell=1`
-                      : `/sessions/${session.id}`
-                  }
-                  isDeleting={deletingSessionId === session.id}
-                  isDeletePending={pendingDeleteSessionId === session.id}
-                  canDownloadAudio={hasDownloadableAudio(session)}
-                  onOpen={(sessionId) => setSelectedSessionId(sessionId)}
-                  onDownloadAudio={(target) => void handleDownloadAudio(target)}
-                  onSendMail={(target) => openShareComposer(target)}
-                  onDelete={(target) => void handleDeleteSession(target)}
+          {!isHistoryCollapsed ? (
+            <>
+              <label className="fieldGroup">
+                <span className="fieldLabel">검색</span>
+                <input
+                  className="textField"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="제목, 프로젝트, 상태로 찾기"
                 />
-              ))
-            ) : (
-              <p className="emptyState">
-                {deferredSearch.trim()
-                  ? "조건에 맞는 기록이 없습니다."
-                  : "저장된 기록이 아직 없습니다."}
-              </p>
-            )}
-          </div>
+              </label>
 
-          {deferredSearch.trim() === "" && filteredSessions.length > visibleSessions.length ? (
-            <button
-              type="button"
-              className="ghostButton ghostButtonSecondary"
-              onClick={() => setVisibleCount((current) => current + 8)}
-            >
-              기록 더 보기
-            </button>
+              <div className="sessionList sessionListCompact">
+                {visibleSessions.length > 0 ? (
+                  visibleSessions.map((session) => (
+                    <SessionRow
+                      key={session.id}
+                      session={session}
+                      detailHref={
+                        isDesktopShell
+                          ? `/sessions/${session.id}?desktop_shell=1`
+                          : `/sessions/${session.id}`
+                      }
+                      isDeleting={deletingSessionId === session.id}
+                      isDeletePending={pendingDeleteSessionId === session.id}
+                      canDownloadAudio={hasDownloadableAudio(session)}
+                      onOpen={(sessionId) => setSelectedSessionId(sessionId)}
+                      onDownloadAudio={(target) => void handleDownloadAudio(target)}
+                      onSendMail={(target) => openShareComposer(target)}
+                      onEditTitle={(target) => openTitleEditor(target)}
+                      onDelete={(target) => void handleDeleteSession(target)}
+                    />
+                  ))
+                ) : (
+                  <p className="emptyState">
+                    {deferredSearch.trim()
+                      ? "조건에 맞는 기록이 없습니다."
+                      : "저장된 기록이 아직 없습니다."}
+                  </p>
+                )}
+              </div>
+
+              {deferredSearch.trim() === "" && filteredSessions.length > visibleSessions.length ? (
+                <button
+                  type="button"
+                  className="ghostButton ghostButtonSecondary"
+                  onClick={() => setVisibleCount((current) => current + 8)}
+                >
+                  기록 더 보기
+                </button>
+              ) : null}
+            </>
           ) : null}
         </section>
       </section>
@@ -1043,15 +1232,24 @@ export function SessionHarness({
               <div>
                 <p className="sectionEyebrow">기록 상세</p>
                 <h2 className="sectionTitleLarge">{selectedSession.title}</h2>
-                <p className="appCopy">{selectedSession.summary}</p>
+                <StorySummary value={selectedSession.summary} />
               </div>
-              <button
-                type="button"
-                className="ghostButton ghostButtonSecondary modalCloseButton"
-                onClick={() => setSelectedSessionId(null)}
-              >
-                닫기
-              </button>
+              <div className="buttonRow modalHeaderActions">
+                <button
+                  type="button"
+                  className="ghostButton"
+                  onClick={() => openTitleEditor(selectedSession)}
+                >
+                  제목 수정
+                </button>
+                <button
+                  type="button"
+                  className="ghostButton ghostButtonSecondary modalCloseButton"
+                  onClick={() => setSelectedSessionId(null)}
+                >
+                  닫기
+                </button>
+              </div>
             </div>
 
             <div className="rowPills">
@@ -1064,14 +1262,68 @@ export function SessionHarness({
               <ul className="compactList">
                 {selectedSession.actionItems.map((item) => (
                   <li key={`${selectedSession.id}-${item.task}`}>
-                    {item.task}
-                    {item.owner ? ` · ${item.owner}` : ""}
-                    {item.dueDate ? ` · ${item.dueDate}` : ""}
+                    {cleanUserFacingText(item.task)}
+                    {item.owner ? ` · ${cleanUserFacingText(item.owner)}` : ""}
+                    {item.dueDate ? ` · ${cleanUserFacingText(item.dueDate)}` : ""}
                   </li>
                 ))}
               </ul>
             ) : null}
 
+          </section>
+        </div>
+      ) : null}
+
+      {titleEditSession ? (
+        <div
+          className="modalBackdrop"
+          role="presentation"
+          onClick={() => setTitleEditSessionId(null)}
+        >
+          <section
+            className="modalCard modalCardNarrow"
+            role="dialog"
+            aria-modal="true"
+            aria-label="제목 수정"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modalHeader">
+              <div>
+                <p className="sectionEyebrow">제목 수정</p>
+                <h2 className="sectionTitleLarge">저장된 기록 이름 바꾸기</h2>
+              </div>
+            </div>
+            <label className="fieldGroup">
+              <span className="fieldLabel">제목</span>
+              <input
+                className="textField"
+                value={titleDraft}
+                maxLength={140}
+                onChange={(event) => setTitleDraft(event.target.value)}
+                autoFocus
+              />
+            </label>
+            <div className="buttonRow modalFooterActions">
+              <button
+                type="button"
+                className="ghostButton ghostButtonSecondary"
+                onClick={() => setTitleEditSessionId(null)}
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                className="recordButton"
+                onClick={() => void handleSaveSessionTitle()}
+                disabled={
+                  savingTitleSessionId === titleEditSession.id ||
+                  titleDraft.trim().length === 0 ||
+                  titleDraft.trim().length > 140
+                }
+              >
+                {savingTitleSessionId === titleEditSession.id ? "저장 중" : "저장"}
+              </button>
+            </div>
           </section>
         </div>
       ) : null}

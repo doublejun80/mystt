@@ -3,7 +3,7 @@
 }
 
 app.localhost, {$APP_DOMAIN} {
-  reverse_proxy web:3000
+  reverse_proxy web:3203
 }
 
 api.localhost, {$API_DOMAIN} {
@@ -13,4 +13,3 @@ api.localhost, {$API_DOMAIN} {
 mail.localhost {
   reverse_proxy mailpit:8025
 }
-

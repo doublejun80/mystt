@@ -41,14 +41,20 @@ function resolveSummaryLines(snapshot: SessionSnapshot) {
     return ["요약이 아직 생성되지 않았습니다."];
   }
 
-  const lines = [notes.summary];
+  const lines = [
+    notes.mode === "meeting" && "schemaVersion" in notes && notes.schemaVersion === "meeting_notes_v2"
+      ? notes.oneLineConclusion
+      : notes.summary
+  ];
 
   if (notes.mode === "meeting") {
     lines.push(
       ...notes.decisions.slice(0, 4).map((item) => `- ${item.decision}`),
-      ...notes.actionItems.slice(0, 4).map(
-        (item) =>
-          `- ${item.task}${item.owner ? ` / ${item.owner}` : ""}${item.dueDate ? ` / ${item.dueDate}` : ""}`
+      ...notes.actionItems.slice(0, 4).map((item) =>
+        [item.task, item.owner, item.dueDate]
+          .map(cleanUserText)
+          .filter(Boolean)
+          .join(" / ")
       )
     );
   } else if (notes.mode === "speech") {
@@ -57,7 +63,62 @@ function resolveSummaryLines(snapshot: SessionSnapshot) {
     lines.push(...notes.keyInsights.slice(0, 4).map((item) => `- ${item}`));
   }
 
-  return lines.slice(0, 5);
+  return lines.map(cleanUserText).filter(Boolean).slice(0, 5);
+}
+
+function cleanUserText(value: string | null | undefined): string {
+  const cleaned = (value ?? "")
+      .replace(/^\s*(?:(?:화자|speaker)\s*)\d+\s*[:：-]\s*/i, "")
+      .replace(/\b(?:null|undefined)\s*::\s*/gi, "")
+      .replace(/(^|[\s([{,;])(?:null|undefined)\s*:\s*/gi, "$1")
+      .replace(/(^|[\s([{,;])[:：]\s*(?:null|undefined)\b/gi, "$1")
+      .replace(/\s*[\[(]\s*evidence(?:Refs?)?\s*:[^\])]*[\])]/gi, "")
+      .replace(
+        /\b\d{1,2}:\d{2}(?::\d{2})?\s*[-–~]\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:[·|:]\s*)?(?:"[^"]*"|“[^”]*”|'[^']*')?/g,
+        " "
+      )
+      .replace(
+        /(^|[\s([{,;])(?:근거|증거|evidence(?:[_\s-]?refs?)?|source(?:\s+quote)?|quote)\s*[:：=]\s*(?:seg[-_]\d+\s*)?/gi,
+        "$1"
+      )
+      .replace(/\bsegment(?:[_\s-]?id)?\s*[:=]?\s*seg[-_]\d+\s*/gi, "")
+      .replace(/\bevidenceRefs?\s*=\s*\S+\s*/gi, "")
+      .replace(/\s*\[\s*\]/g, "")
+      .replace(/\s*\((?:seg[-_]\d+\s*,?\s*)+\)/gi, "")
+      .replace(/\bseg[-_]\d+\s*(?:의|에서|에)?\s*/gi, "")
+      .replace(/\b(?:conf|confidence)\s*[:=]\s*\S+\s*/gi, "")
+      .replace(/\blang(?:uage)?\s*[:=]\s*\S+\s*/gi, "")
+      .replace(/\b(?:severity|priority)\s*[:=]\s*(?:high|medium|low|critical|urgent|p\d+)\b\s*/gi, "")
+      .replace(
+        /(^|[\s([{,;])(?:ownerStatus|dueStatus|status)\s*[:=]\s*(?:needs_confirmation|unclear|confirmed|inferred|explicit|todo|in_progress|done)\b\s*/gi,
+        "$1"
+      )
+      .replace(
+        /(^|[\s([{,;])[-–—]?\s*[:：]?\s*(?:needs_confirmation|unclear|confirmed|inferred|explicit|todo|in_progress|done)\b\s*/gi,
+        "$1"
+      )
+      .replace(/^[\s,.;:，。；：-]+$/u, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+  return cleaned;
+}
+
+function formatSessionMode(mode: string) {
+  return mode === "meeting" ? "회의" : mode === "speech" ? "발표" : mode === "interview" ? "인터뷰" : mode;
+}
+
+function formatKoreanDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "Asia/Seoul"
+  }).format(date);
 }
 
 function sanitizeFileSegment(value: string) {
@@ -157,15 +218,26 @@ export async function buildShareEmailDraft(input: {
   const attachments = [transcriptAttachment, notesAttachment, audioAttachment].filter(
     (attachment): attachment is MailMessageAttachment => Boolean(attachment)
   );
+  const missingAttachments = [
+    selection.includeDetails && !transcriptAttachment ? "정리 전사 Markdown" : null,
+    selection.includeDetails && !notesAttachment ? "회의록 DOCX" : null,
+    selection.includeAudio && !audioAttachment ? "원본 음성" : null
+  ].filter(Boolean);
+
+  if (missingAttachments.length > 0) {
+    throw new Error(`선택한 첨부를 준비하지 못했습니다: ${missingAttachments.join(", ")}`);
+  }
 
   const textLines = [
     `[mystt] ${session.title}`,
-    `모드: ${session.mode}`,
-    `시작 시각: ${session.startedAt}`
+    `모드: ${formatSessionMode(session.mode)}`,
+    `시작 시각: ${formatKoreanDateTime(session.startedAt)}`
   ];
   const htmlSections: string[] = [
     `<p><strong>[mystt]</strong> ${escapeHtml(session.title)}</p>`,
-    `<p>모드: ${escapeHtml(session.mode)}<br />시작 시각: ${escapeHtml(session.startedAt)}</p>`
+    `<p>모드: ${escapeHtml(formatSessionMode(session.mode))}<br />시작 시각: ${escapeHtml(
+      formatKoreanDateTime(session.startedAt)
+    )}</p>`
   ];
 
   if (selection.includeSummary) {

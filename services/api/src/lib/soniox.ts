@@ -12,6 +12,38 @@ import { apiConfig } from "../config";
 import { getSonioxClient } from "./providers";
 
 const SONIOX_API_BASE_URL = "https://api.soniox.com";
+const SONIOX_CONTEXT_LIMIT = 10_000;
+const SONIOX_REST_TIMEOUT_MS = 30_000;
+const SONIOX_REST_MAX_ATTEMPTS = 3;
+const SONIOX_REST_RETRY_BASE_DELAY_MS = 250;
+const SONIOX_REST_RETRY_MAX_DELAY_MS = 2_000;
+
+const meetingTemplateTypeCandidates = [
+  "general_meeting",
+  "purchase_review",
+  "sales_meeting",
+  "user_interview",
+  "support_call"
+] as const;
+
+type SonioxContextGeneralEntry = {
+  key: string;
+  value: string;
+};
+
+export interface SonioxContextInput {
+  sessionId: string;
+  mode: SessionMode;
+  title?: string;
+  project?: string;
+  templateTypeCandidates?: string[];
+  expectedLanguages?: string[];
+  expectedSpeakerCount?: number;
+  knownTerms?: string[];
+  participantNames?: string[];
+  meetingPurpose?: string;
+  additionalContext?: string[];
+}
 
 interface RestTranscriptToken {
   text: string;
@@ -37,6 +69,184 @@ interface RestTranscriptionResponse {
   file_id?: string | null;
   client_reference_id?: string | null;
   error_message?: string | null;
+}
+
+class SonioxHttpError extends Error {
+  constructor(
+    readonly status: number,
+    body: string
+  ) {
+    super(`Soniox HTTP ${status}: ${body}`);
+  }
+}
+
+class SonioxTimeoutError extends Error {
+  constructor() {
+    super(`Soniox REST request timed out after ${SONIOX_REST_TIMEOUT_MS}ms`);
+    this.name = "SonioxTimeoutError";
+  }
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || /abort/i.test(error.message))
+  );
+}
+
+function isRetryableSonioxError(error: unknown): boolean {
+  if (error instanceof SonioxTimeoutError) {
+    return false;
+  }
+
+  if (error instanceof SonioxHttpError) {
+    return error.status === 429 || error.status >= 500;
+  }
+
+  if (isAbortError(error)) {
+    return false;
+  }
+
+  return error instanceof Error;
+}
+
+function retryDelayMs(attemptIndex: number): number {
+  const baseDelay = SONIOX_REST_RETRY_BASE_DELAY_MS * 2 ** attemptIndex;
+  const jitter = Math.floor(Math.random() * SONIOX_REST_RETRY_BASE_DELAY_MS);
+  return Math.min(baseDelay + jitter, SONIOX_REST_RETRY_MAX_DELAY_MS);
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, SONIOX_REST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (timedOut || isAbortError(error)) {
+      throw new SonioxTimeoutError();
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export function truncateSonioxContextText(value: string, limit = SONIOX_CONTEXT_LIMIT): string {
+  if (value.length <= limit) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, limit - 3))}...`;
+}
+
+function compactList(values?: string[]): string[] {
+  return Array.from(
+    new Set(
+      (values ?? [])
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
+function contextEntry(
+  key: string,
+  value: string | number | undefined
+): SonioxContextGeneralEntry | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalized = String(value).trim();
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  return {
+    key,
+    value: truncateSonioxContextText(normalized, 1_000)
+  };
+}
+
+function defaultTemplateTypeCandidates(mode: SessionMode): string[] {
+  if (mode === "interview") {
+    return ["user_interview", "general_meeting"];
+  }
+
+  if (mode === "speech") {
+    return ["general_meeting"];
+  }
+
+  return [...meetingTemplateTypeCandidates];
+}
+
+export function buildSonioxContext(input: SonioxContextInput): {
+  general: SonioxContextGeneralEntry[];
+  text: string;
+} {
+  const templateTypeCandidates = compactList(
+    input.templateTypeCandidates ?? defaultTemplateTypeCandidates(input.mode)
+  );
+  const expectedLanguages = compactList(input.expectedLanguages);
+  const knownTerms = compactList(input.knownTerms);
+  const participantNames = compactList(input.participantNames);
+  const additionalContext = compactList(input.additionalContext);
+  const project = input.project?.trim() || "general";
+  const title = input.title?.trim() || "Untitled session";
+
+  const general = [
+    contextEntry("session_id", input.sessionId),
+    contextEntry("mode", input.mode),
+    contextEntry("title", title),
+    contextEntry("project", project),
+    contextEntry("template_type_candidates", templateTypeCandidates.join(", ")),
+    contextEntry("expected_languages", expectedLanguages.join(", ")),
+    contextEntry("expected_speaker_count", input.expectedSpeakerCount),
+    contextEntry("known_terms", knownTerms.join(", ")),
+    contextEntry("participant_names", participantNames.join(", ")),
+    ...additionalContext.map((item, index) => contextEntry(`context_${index + 1}`, item))
+  ].filter((entry): entry is SonioxContextGeneralEntry => Boolean(entry));
+
+  const text = truncateSonioxContextText(
+    [
+      `회의 제목: ${title}`,
+      `프로젝트: ${project}`,
+      `세션 모드: ${input.mode}`,
+      templateTypeCandidates.length > 0
+        ? `회의록 템플릿 후보: ${templateTypeCandidates.join(", ")}`
+        : null,
+      expectedLanguages.length > 0 ? `예상 언어: ${expectedLanguages.join(", ")}` : null,
+      input.expectedSpeakerCount !== undefined
+        ? `예상 화자 수: ${input.expectedSpeakerCount}`
+        : null,
+      participantNames.length > 0 ? `참석자 후보: ${participantNames.join(", ")}` : null,
+      knownTerms.length > 0 ? `도메인 용어: ${knownTerms.join(", ")}` : null,
+      input.meetingPurpose?.trim() ? `회의 목적: ${input.meetingPurpose.trim()}` : null,
+      additionalContext.length > 0 ? `추가 맥락: ${additionalContext.join(" / ")}` : null,
+      "Soniox는 최종 OpenAI 회의록 작성에 사용할 원장 역할을 하므로 화자, 시간, 언어, 낮은 신뢰도 구간을 가능한 한 보존합니다."
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n")
+  );
+
+  return {
+    general,
+    text
+  };
 }
 
 function isLocalHostname(hostname: string): boolean {
@@ -124,7 +334,8 @@ async function sonioxRestFetch<T>(
   path: string,
   init?: RequestInit & { json?: unknown; expectJson?: boolean }
 ): Promise<T> {
-  const response = await fetch(`${SONIOX_API_BASE_URL}${path}`, {
+  const url = `${SONIOX_API_BASE_URL}${path}`;
+  const requestInit: RequestInit = {
     ...init,
     headers: {
       Authorization: `Bearer ${apiConfig.SONIOX_API_KEY}`,
@@ -135,18 +346,52 @@ async function sonioxRestFetch<T>(
       init && "json" in init && init.json !== undefined
         ? JSON.stringify(init.json)
         : init?.body
-  });
+  };
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Soniox HTTP ${response.status}: ${errorText}`);
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < SONIOX_REST_MAX_ATTEMPTS; attempt += 1) {
+    let response: Response;
+
+    try {
+      response = await fetchWithTimeout(url, requestInit);
+    } catch (error) {
+      lastError = error;
+
+      if (
+        attempt < SONIOX_REST_MAX_ATTEMPTS - 1 &&
+        isRetryableSonioxError(error)
+      ) {
+        await sleep(retryDelayMs(attempt));
+        continue;
+      }
+
+      throw error;
+    }
+
+    if (!response.ok) {
+      const error = new SonioxHttpError(response.status, await response.text());
+      lastError = error;
+
+      if (
+        attempt < SONIOX_REST_MAX_ATTEMPTS - 1 &&
+        isRetryableSonioxError(error)
+      ) {
+        await sleep(retryDelayMs(attempt));
+        continue;
+      }
+
+      throw error;
+    }
+
+    if (init?.expectJson === false) {
+      return undefined as T;
+    }
+
+    return (await response.json()) as T;
   }
 
-  if (init?.expectJson === false) {
-    return undefined as T;
-  }
-
-  return (await response.json()) as T;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function createRealtimeTemporaryKey(input: {
@@ -184,27 +429,37 @@ export async function uploadSourceAudioFile(input: {
 export async function createAsyncTranscriptionJob(input: {
   sessionId: string;
   mode: SessionMode;
+  title?: string;
+  project?: string;
   audioUrl?: string;
   fileId?: string;
   languageHints: string[];
-  context: string[];
+  context?: string[];
+  templateTypeCandidates?: string[];
+  expectedSpeakerCount?: number;
+  knownTerms?: string[];
+  participantNames?: string[];
+  meetingPurpose?: string;
 }) {
+  const context = buildSonioxContext({
+    sessionId: input.sessionId,
+    mode: input.mode,
+    title: input.title,
+    project: input.project,
+    templateTypeCandidates: input.templateTypeCandidates,
+    expectedLanguages: input.languageHints,
+    expectedSpeakerCount: input.expectedSpeakerCount,
+    knownTerms: input.knownTerms,
+    participantNames: input.participantNames,
+    meetingPurpose: input.meetingPurpose,
+    additionalContext: input.context
+  });
   const request = {
     model: apiConfig.SONIOX_ASYNC_MODEL,
     language_hints: input.languageHints,
     enable_language_identification: true,
     enable_speaker_diarization: true,
-    context: {
-      general: [
-        { key: "session_id", value: input.sessionId },
-        { key: "mode", value: input.mode },
-        ...input.context.map((item, index) => ({
-          key: `context_${index + 1}`,
-          value: item
-        }))
-      ],
-      text: input.context.join("\n")
-    },
+    context,
     client_reference_id: input.sessionId,
     ...resolveSonioxWebhookConfig(),
     audio_url: input.audioUrl,
@@ -257,21 +512,21 @@ export async function cleanupAsyncTranscriptionResources(input: {
 }) {
   const deletedTargets: string[] = [];
   const skippedTargets: string[] = [];
+  const failures: string[] = [];
 
   try {
     await deleteAsyncTranscription(input.transcriptionId);
-    deletedTargets.push(...buildCleanupTargets(input));
-    return {
-      cleanupTargets: buildCleanupTargets(input),
-      deletedTargets,
-      skippedTargets
-    };
+    deletedTargets.push(`transcriptions/${input.transcriptionId}`);
   } catch (error) {
-    if (!isCleanupNotFoundError(error)) {
-      throw error;
+    if (isCleanupNotFoundError(error)) {
+      skippedTargets.push(`transcriptions/${input.transcriptionId}`);
+    } else {
+      failures.push(
+        `transcriptions/${input.transcriptionId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
-
-    skippedTargets.push(`transcriptions/${input.transcriptionId}`);
   }
 
   if (input.fileId) {
@@ -285,6 +540,10 @@ export async function cleanupAsyncTranscriptionResources(input: {
 
       skippedTargets.push(`files/${input.fileId}`);
     }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Soniox cleanup failed: ${failures.join("; ")}`);
   }
 
   return {

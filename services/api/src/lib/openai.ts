@@ -8,17 +8,67 @@ import {
   getNotesSchemaName,
   type SessionNotes
 } from "@mystt/notes-schema";
+import {
+  restoreReadableTranscriptSpacing,
+  type NormalizedTranscript
+} from "@mystt/transcript-normalizer";
 
 import { apiConfig } from "../config";
 import { getOpenAIClient } from "./providers";
 
+function formatTimestamp(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(
+      2,
+      "0"
+    )}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function isNormalizedTranscript(value: string | NormalizedTranscript): value is NormalizedTranscript {
+  return typeof value === "object" && Array.isArray(value.segments);
+}
+
+export function formatTranscriptForNotesPrompt(
+  transcript: string | NormalizedTranscript
+): string {
+  if (!isNormalizedTranscript(transcript)) {
+    return [
+      "[seg_0001 | 00:00-00:00 | Unknown speaker | conf=n/a | lang=unknown]",
+      transcript.trim()
+    ].join(" ");
+  }
+
+  return transcript.segments
+    .map((segment) => {
+      const confidence =
+        segment.confidence === undefined ? "n/a" : segment.confidence.toFixed(2);
+      const language = segment.language?.trim() || "unknown";
+
+      return `[${segment.id} | ${formatTimestamp(segment.startMs)}-${formatTimestamp(
+        segment.endMs
+      )} | ${segment.speaker} | conf=${confidence} | lang=${language}] ${restoreReadableTranscriptSpacing(
+        segment.text
+      )}`;
+    })
+    .join("\n");
+}
+
 export async function generateStructuredNotes(input: {
   mode: SessionMode;
-  transcript: string;
+  transcript: string | NormalizedTranscript;
   sessionTitle?: string;
 }): Promise<SessionNotes> {
   const client = getOpenAIClient();
   const schema = getNotesSchemaForMode(input.mode);
+  const transcriptForPrompt = formatTranscriptForNotesPrompt(input.transcript);
 
   const completion = await client.chat.completions.parse({
     model: apiConfig.OPENAI_MODEL,
@@ -33,9 +83,10 @@ export async function generateStructuredNotes(input: {
         role: "user",
         content: [
           input.sessionTitle ? `Session title: ${input.sessionTitle}` : null,
-          "Use transcript evidence only. If a field is unknown, return null or omit the item.",
+          "Use transcript evidence only. If a field is unknown, return null, unclear, or needs_confirmation according to the schema.",
+          "Evidence references must use the segment ids shown in the transcript lines.",
           "Transcript:",
-          input.transcript
+          transcriptForPrompt
         ]
           .filter(Boolean)
           .join("\n\n")

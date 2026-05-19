@@ -2,6 +2,7 @@ import type { SessionRecord } from "@mystt/audio-core";
 import { modeLabels, statusLabels } from "@mystt/ui-kit";
 
 import type { SessionNotesRecord } from "./api";
+import { cleanUserFacingText } from "./user-facing-text";
 
 export interface SessionPortalRecord extends SessionRecord {
   summary: string;
@@ -12,7 +13,9 @@ export interface SessionPortalRecord extends SessionRecord {
 
 function buildFallbackNarrative(session: SessionRecord) {
   return {
-    summary: `${modeLabels[session.mode]} 세션이 ${statusLabels[session.status]} 상태입니다. 대기 청크 ${session.pendingChunkCount}개, 준비된 아티팩트 ${session.artifacts.filter((artifact) => artifact.status === "ready").length}개입니다.`,
+    summary: cleanUserFacingText(
+      `${modeLabels[session.mode]} 세션이 ${statusLabels[session.status]} 상태입니다. 대기 청크 ${session.pendingChunkCount}개, 준비된 아티팩트 ${session.artifacts.filter((artifact) => artifact.status === "ready").length}개입니다.`
+    ),
     decisions: [],
     actionItems: []
   };
@@ -21,22 +24,25 @@ function buildFallbackNarrative(session: SessionRecord) {
 function buildNarrativeFromNotes(notes: SessionNotesRecord) {
   if (notes.mode === "meeting") {
     return {
-      summary: notes.summary,
-      decisions: notes.decisions.map((item) => item.decision),
+      summary:
+        "schemaVersion" in notes && notes.schemaVersion === "meeting_notes_v2"
+          ? cleanUserFacingText(notes.oneLineConclusion)
+          : cleanUserFacingText(notes.summary),
+      decisions: notes.decisions.map((item) => cleanUserFacingText(item.decision)),
       actionItems: notes.actionItems.map((item) => ({
-        task: item.task,
-        owner: item.owner,
-        dueDate: item.dueDate
+        task: cleanUserFacingText(item.task),
+        owner: item.owner ? cleanUserFacingText(item.owner) : null,
+        dueDate: item.dueDate ? cleanUserFacingText(item.dueDate) : null
       }))
     };
   }
 
   if (notes.mode === "speech") {
     return {
-      summary: notes.summary,
-      decisions: notes.keyMessages,
+      summary: cleanUserFacingText(notes.summary),
+      decisions: notes.keyMessages.map(cleanUserFacingText),
       actionItems: notes.audienceQna.slice(0, 3).map((item) => ({
-        task: item.question,
+        task: cleanUserFacingText(item.question),
         owner: null,
         dueDate: null
       }))
@@ -44,10 +50,10 @@ function buildNarrativeFromNotes(notes: SessionNotesRecord) {
   }
 
   return {
-    summary: notes.summary,
-    decisions: notes.keyInsights,
+    summary: cleanUserFacingText(notes.summary),
+    decisions: notes.keyInsights.map(cleanUserFacingText),
     actionItems: notes.followUpQuestions.slice(0, 3).map((item) => ({
-      task: item,
+      task: cleanUserFacingText(item),
       owner: null,
       dueDate: null
     }))

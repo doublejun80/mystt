@@ -3,8 +3,9 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 
 import { initializeStore } from "./lib/store";
+import { registerPublicAccessGuard } from "./lib/public-access";
+import { authRoutes } from "./routes/auth";
 import { healthRoutes } from "./routes/health";
-import { insforgeRoutes } from "./routes/insforge";
 import { notesRoutes } from "./routes/notes";
 import { realtimeRoutes } from "./routes/realtime";
 import { shareRoutes } from "./routes/share";
@@ -30,9 +31,10 @@ export async function buildApp() {
       fileSize: 512 * 1024 * 1024
     }
   });
+  registerPublicAccessGuard(app);
 
+  await app.register(authRoutes);
   await app.register(healthRoutes);
-  await app.register(insforgeRoutes);
   await app.register(sessionRoutes);
   await app.register(uploadRoutes);
   await app.register(systemRoutes);

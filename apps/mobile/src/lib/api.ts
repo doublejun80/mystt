@@ -28,6 +28,7 @@ export interface MobileSourceAudioUploadResponse {
   location: string;
   fileName: string;
   byteLength: number;
+  sha256: string;
   createdAt: string;
 }
 

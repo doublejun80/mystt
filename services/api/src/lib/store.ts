@@ -16,6 +16,7 @@ import {
   renderSessionNotesHtml
 } from "./artifacts";
 import {
+  deletePersistedSessionState,
   deletePersistedSessionFiles,
   type AuditEventRecord,
   loadPersistedApiState,
@@ -25,6 +26,7 @@ import {
   writeSessionSourceAudio,
   writeSessionSourceAudioFromFile,
   type StoredProviderCheck,
+  type StoredSourceAudioUpload,
   type StoredTranscription
 } from "./persistence";
 
@@ -32,6 +34,7 @@ const sessions = new Map<string, SessionRecord>();
 const webhookFingerprints = new Set<string>();
 const sessionByTranscriptionId = new Map<string, string>();
 const transcriptionBySessionId = new Map<string, StoredTranscription>();
+const sourceAudioUploadsBySessionId = new Map<string, StoredSourceAudioUpload[]>();
 const normalizedTranscripts = new Map<string, NormalizedTranscript>();
 const rawTranscriptText = new Map<string, string>();
 const notesBySessionId = new Map<
@@ -66,6 +69,7 @@ function snapshotState() {
     webhookFingerprints: [...webhookFingerprints.values()],
     sessionByTranscriptionId: Object.fromEntries(sessionByTranscriptionId),
     transcriptionBySessionId: Object.fromEntries(transcriptionBySessionId),
+    sourceAudioUploadsBySessionId: Object.fromEntries(sourceAudioUploadsBySessionId),
     normalizedTranscripts: Object.fromEntries(normalizedTranscripts),
     rawTranscriptText: Object.fromEntries(rawTranscriptText),
     notesBySessionId: Object.fromEntries(notesBySessionId),
@@ -79,6 +83,7 @@ function hydrateState(state: Awaited<ReturnType<typeof loadPersistedApiState>>) 
   webhookFingerprints.clear();
   sessionByTranscriptionId.clear();
   transcriptionBySessionId.clear();
+  sourceAudioUploadsBySessionId.clear();
   normalizedTranscripts.clear();
   rawTranscriptText.clear();
   notesBySessionId.clear();
@@ -99,6 +104,12 @@ function hydrateState(state: Awaited<ReturnType<typeof loadPersistedApiState>>) 
 
   for (const [sessionId, transcription] of Object.entries(state.transcriptionBySessionId)) {
     transcriptionBySessionId.set(sessionId, transcription);
+  }
+
+  for (const [sessionId, uploads] of Object.entries(
+    state.sourceAudioUploadsBySessionId ?? {}
+  )) {
+    sourceAudioUploadsBySessionId.set(sessionId, uploads);
   }
 
   for (const [sessionId, transcript] of Object.entries(state.normalizedTranscripts)) {
@@ -317,18 +328,30 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   }
 
   const transcription = transcriptionBySessionId.get(sessionId);
-
-  await deletePersistedSessionFiles({
+  const fileCleanup = {
     sessionId,
     localAudioPath: session.localAudioPath,
     artifactLocations: session.artifacts.map((artifact) => artifact.location)
-  });
+  };
+  let canDeletePersistedFiles = true;
+
+  try {
+    await deletePersistedSessionState(sessionId);
+  } catch (error) {
+    canDeletePersistedFiles = false;
+    console.warn(
+      "[store] Failed to delete remote session state; keeping source files and deleting from local fallback state:",
+      sessionId,
+      error instanceof Error ? error.message : error
+    );
+  }
 
   sessions.delete(sessionId);
   normalizedTranscripts.delete(sessionId);
   rawTranscriptText.delete(sessionId);
   notesBySessionId.delete(sessionId);
   transcriptionBySessionId.delete(sessionId);
+  sourceAudioUploadsBySessionId.delete(sessionId);
 
   if (transcription?.transcriptionId) {
     sessionByTranscriptionId.delete(transcription.transcriptionId);
@@ -349,7 +372,48 @@ export async function deleteSession(sessionId: string): Promise<boolean> {
   });
 
   await persistCurrentState();
+  if (!canDeletePersistedFiles) {
+    return true;
+  }
+
+  await deletePersistedSessionFiles(fileCleanup).catch((error) => {
+    console.warn(
+      "[store] Deleted session state but failed to clean persisted files:",
+      sessionId,
+      error instanceof Error ? error.message : error
+    );
+  });
   return true;
+}
+
+export async function updateSessionTitle(
+  sessionId: string,
+  title: string
+): Promise<SessionRecord | undefined> {
+  const session = sessions.get(sessionId);
+
+  if (!session) {
+    return undefined;
+  }
+
+  const nextTitle = title.trim();
+  if (!nextTitle) {
+    return session;
+  }
+
+  const previousTitle = session.title;
+  session.title = nextTitle;
+  appendAuditEvent({
+    sessionId,
+    kind: "session.title.updated",
+    payload: {
+      from: previousTitle,
+      to: nextTitle,
+      title: nextTitle
+    }
+  });
+  await persistCurrentState();
+  return session;
 }
 
 export async function updateSessionStatus(
@@ -483,6 +547,44 @@ export function getStoredTranscription(sessionId: string) {
   return transcriptionBySessionId.get(sessionId);
 }
 
+export function findReusableSourceAudioUpload(input: {
+  sessionId: string;
+  sha256: string;
+  byteLength: number;
+}) {
+  return sourceAudioUploadsBySessionId
+    .get(input.sessionId)
+    ?.find(
+      (upload) =>
+        upload.sha256 === input.sha256 && upload.byteLength === input.byteLength
+    );
+}
+
+export async function recordSourceAudioUpload(input: StoredSourceAudioUpload) {
+  const uploads = sourceAudioUploadsBySessionId.get(input.sessionId) ?? [];
+  const nextUploads = uploads.filter(
+    (upload) =>
+      upload.sha256 !== input.sha256 || upload.byteLength !== input.byteLength
+  );
+  nextUploads.push(input);
+  sourceAudioUploadsBySessionId.set(input.sessionId, nextUploads);
+  appendAuditEvent({
+    sessionId: input.sessionId,
+    kind: "source_audio.upload_ledger.updated",
+    payload: {
+      sha256: input.sha256,
+      byteLength: input.byteLength,
+      sourceLocation: input.sourceLocation,
+      sonioxFileId: input.sonioxFileId,
+      sonioxFileName: input.sonioxFileName,
+      uploadedAt: input.uploadedAt,
+      contentType: input.contentType ?? null,
+      sourceFileName: input.sourceFileName ?? null
+    }
+  });
+  await persistCurrentState();
+}
+
 export async function saveTranscriptText(sessionId: string, transcriptText: string) {
   rawTranscriptText.set(sessionId, transcriptText);
   appendAuditEvent({
@@ -533,13 +635,29 @@ export async function saveSourceAudioFromFile(input: {
   contentType?: string;
   sourceUrl?: string;
 }) {
+  const location = await writeSourceAudioCandidateFromFile(input);
+  await commitVerifiedSourceAudio({
+    ...input,
+    location
+  });
+  return location;
+}
+
+export async function writeSourceAudioCandidateFromFile(input: {
+  sessionId: string;
+  fileName: string;
+  filePath: string;
+  byteLength: number;
+  sha256: string;
+  contentType?: string;
+  sourceUrl?: string;
+}) {
   const location = await writeSessionSourceAudioFromFile({
     sessionId: input.sessionId,
     fileName: input.fileName,
     filePath: input.filePath,
     contentType: input.contentType
   });
-  setSessionLocalAudioPath(input.sessionId, location);
   appendAuditEvent({
     sessionId: input.sessionId,
     kind: "source_audio.staged",
@@ -554,6 +672,69 @@ export async function saveSourceAudioFromFile(input: {
   });
   await persistCurrentState();
   return location;
+}
+
+export async function commitVerifiedSourceAudio(input: {
+  sessionId: string;
+  location: string;
+  fileName: string;
+  byteLength: number;
+  sha256: string;
+  contentType?: string;
+  sourceUrl?: string;
+}) {
+  const next = setSessionLocalAudioPath(input.sessionId, input.location);
+
+  if (!next) {
+    return undefined;
+  }
+
+  appendAuditEvent({
+    sessionId: input.sessionId,
+    kind: "source_audio.verified",
+    payload: {
+      location: input.location,
+      fileName: input.fileName,
+      byteLength: input.byteLength,
+      sha256: input.sha256,
+      contentType: input.contentType ?? null,
+      sourceUrl: input.sourceUrl ?? null
+    }
+  });
+  await persistCurrentState();
+  return input.location;
+}
+
+export async function clearSourceAudioPath(input: {
+  sessionId: string;
+  expectedLocation?: string;
+  reason: string;
+}) {
+  const session = sessions.get(input.sessionId);
+
+  if (!session) {
+    return undefined;
+  }
+
+  if (input.expectedLocation && session.localAudioPath !== input.expectedLocation) {
+    return session;
+  }
+
+  const next = {
+    ...session,
+    localAudioPath: ""
+  };
+  sessions.set(input.sessionId, next);
+  appendAuditEvent({
+    sessionId: input.sessionId,
+    kind: "source_audio.local_path_cleared",
+    payload: {
+      previousLocation: session.localAudioPath,
+      reason: input.reason
+    }
+  });
+  await persistCurrentState();
+  return next;
 }
 
 export async function saveNormalizedTranscript(

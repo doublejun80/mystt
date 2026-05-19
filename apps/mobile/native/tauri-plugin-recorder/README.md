@@ -15,8 +15,8 @@
 - 세션 인덱스 파일: `mystt-recorder/sessions.json`
 - 세션 증거 파일: `mystt-recorder/recordings/<session-id>/session.json`
 
-이 계약은 `/Volumes/mac_dock/github/mystt/packages/audio-core/src/tauri-recorder.ts` 와
-`/Volumes/mac_dock/github/mystt/apps/desktop/src-tauri/src/recorder_store.rs` 를 기준으로 유지합니다.
+이 계약은 `packages/audio-core/src/tauri-recorder.ts` 와
+`apps/desktop/src-tauri/src/recorder_store.rs` 를 기준으로 유지합니다.
 
 ## iOS Responsibilities
 

@@ -17,6 +17,7 @@ export function SessionRow({
   onOpen,
   onDownloadAudio,
   onSendMail,
+  onEditTitle,
   onDelete
 }: {
   session: SessionPortalRecord;
@@ -27,6 +28,7 @@ export function SessionRow({
   onOpen: (sessionId: string) => void;
   onDownloadAudio: (session: SessionPortalRecord) => void;
   onSendMail: (session: SessionPortalRecord) => void;
+  onEditTitle: (session: SessionPortalRecord) => void;
   onDelete: (session: SessionPortalRecord) => void;
 }) {
   function stopRowClick(event: MouseEvent<HTMLElement>) {
@@ -93,6 +95,19 @@ export function SessionRow({
 
           <button
             type="button"
+            className="sessionIconButton"
+            aria-label="제목 수정"
+            title="제목 수정"
+            onClick={(event) => {
+              stopRowClick(event);
+              onEditTitle(session);
+            }}
+          >
+            <EditIcon />
+          </button>
+
+          <button
+            type="button"
             className={
               isDeletePending
                 ? "sessionIconButton sessionIconButtonDanger sessionIconButtonDangerActive"
@@ -148,6 +163,15 @@ function PaperIcon() {
       <path d="M11.5 3.5V7H15" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
       <path d="M8 10h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       <path d="M8 12.8h5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </IconFrame>
+  );
+}
+
+function EditIcon() {
+  return (
+    <IconFrame>
+      <path d="M5 14.5h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M6.2 11.6 12.6 5.2l2.2 2.2-6.4 6.4-2.8.6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
     </IconFrame>
   );
 }

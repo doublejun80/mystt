@@ -29,11 +29,6 @@ const envSchema = z.object({
   MINIO_BUCKET_AUDIO: z.string().default("audio"),
   MINIO_BUCKET_ARTIFACTS: z.string().default("artifacts"),
   MINIO_REGION: z.string().default("us-east-1"),
-  INSFORGE_BASE_URL: z.string().optional(),
-  INSFORGE_ADMIN_TOKEN: z.string().optional(),
-  INSFORGE_STORAGE_AUDIO_BUCKET: z.string().default("audio"),
-  INSFORGE_STORAGE_ARTIFACTS_BUCKET: z.string().default("artifacts"),
-  INSFORGE_STORAGE_SHADOW_WRITE: z.coerce.boolean().default(false),
   SONIOX_API_KEY: z.string().optional(),
   SONIOX_WEBHOOK_URL: z.string().optional(),
   SONIOX_WEBHOOK_SECRET: z.string().optional(),
@@ -42,6 +37,13 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default("gpt-5.4-mini"),
   OPENAI_AUDIO_MODEL: z.string().default("gpt-4o-mini-transcribe"),
+  MYSTT_QA_TOKEN: z.string().optional(),
+  MYSTT_OWNER_EMAIL: z.string().email().optional(),
+  MYSTT_OWNER_PASSWORD: z.string().optional(),
+  MYSTT_AUTH_SECRET: z.string().optional(),
+  MYSTT_SESSION_TTL_SECONDS: z.coerce.number().default(60 * 60 * 12),
+  MYSTT_ALLOW_UNAUTHENTICATED_DEV: z.coerce.boolean().default(false),
+  MYSTT_REQUIRE_REMOTE_BACKENDS: z.coerce.boolean().default(false),
   MAIL_DELIVERY_MODE: z.enum(["auto", "smtp", "mailapp"]).default("auto"),
   MAIL_FROM: z.string().default("notes@mystt.local"),
   MAIL_HOST: z.string().default("127.0.0.1"),
@@ -76,16 +78,4 @@ export function isMinioConfigured(): boolean {
       apiConfig.MINIO_SECRET_KEY &&
       apiConfig.MINIO_BUCKET_ARTIFACTS
   );
-}
-
-export function isInsforgeConfigured(): boolean {
-  return Boolean(apiConfig.INSFORGE_BASE_URL);
-}
-
-export function isInsforgeAdminConfigured(): boolean {
-  return Boolean(apiConfig.INSFORGE_BASE_URL && apiConfig.INSFORGE_ADMIN_TOKEN);
-}
-
-export function isInsforgeStorageShadowWriteEnabled(): boolean {
-  return isInsforgeAdminConfigured() && apiConfig.INSFORGE_STORAGE_SHADOW_WRITE;
 }

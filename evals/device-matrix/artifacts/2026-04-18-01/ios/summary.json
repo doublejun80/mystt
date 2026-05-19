@@ -1,0 +1,17 @@
+{
+  "lane": "ios",
+  "automated": {
+    "typecheckPassed": true,
+    "testPassed": true
+  },
+  "capturedFields": [],
+  "missingManualEvidence": [
+    "real iPhone model and iOS version",
+    "screen-off recording survival capture",
+    "Bluetooth mic input switch capture",
+    "force-quit and recovery UI capture",
+    "runtime-state.json path from real device",
+    "recordings/<session-id>/session.json path from real device"
+  ],
+  "status": "blocked"
+}

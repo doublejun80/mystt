@@ -15,10 +15,15 @@ resolve_python() {
     candidates+=("$(<"${ROOT_DIR}/graphify-out/.graphify_python")")
   fi
 
-  candidates+=(
-    "${ROOT_DIR}/.venv-graphify/bin/python"
-    "/Volumes/mac_dock/github/mylaw/.venv/bin/python"
-  )
+  candidates+=("${ROOT_DIR}/.venv-graphify/bin/python")
+
+  if command -v python3 >/dev/null 2>&1; then
+    candidates+=("$(command -v python3)")
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    candidates+=("$(command -v python)")
+  fi
 
   for candidate in "${candidates[@]}"; do
     if [[ -x "${candidate}" ]] && "${candidate}" -c "import graphify" >/dev/null 2>&1; then
@@ -34,7 +39,8 @@ Tried:
 - $GRAPHIFY_PYTHON
 - graphify-out/.graphify_python
 - .venv-graphify/bin/python
-- /Volumes/mac_dock/github/mylaw/.venv/bin/python
+- python3
+- python
 
 Set GRAPHIFY_PYTHON=/abs/path/to/python and try again.
 EOF

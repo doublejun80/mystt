@@ -246,6 +246,12 @@ input {
   transform: translateY(-1px);
 }
 
+.button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
 .button-primary {
   background: linear-gradient(135deg, #4c64ff, #2f45d2);
   border-color: rgba(116, 136, 255, 0.4);
@@ -274,6 +280,18 @@ input {
   padding: 24px;
   display: grid;
   gap: 16px;
+}
+
+.account-overview-card {
+  padding: 18px 20px;
+}
+
+.account-grid {
+  align-items: start;
+}
+
+.developer-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 .diagnostics-panel {
@@ -321,6 +339,15 @@ input {
 .settings-field {
   display: grid;
   gap: 10px;
+}
+
+#auth-availability-message:not([hidden]) {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(198, 145, 43, 0.14);
+  border: 1px solid rgba(237, 184, 76, 0.28);
+  color: #f7dca0;
 }
 
 .settings-field input {
@@ -373,6 +400,11 @@ input {
 
   .settings-sheet {
     max-height: calc(100vh - 24px);
+  }
+
+  .account-grid,
+  .developer-grid {
+    grid-template-columns: 1fr;
   }
 
   .portal-frame,

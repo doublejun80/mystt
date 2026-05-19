@@ -1,7 +1,9 @@
 use serde::Serialize;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 mod recorder_store;
@@ -31,7 +33,7 @@ struct DesktopKeepAwakeStatus {
     detail: String,
 }
 
-fn resolve_downloads_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+fn resolve_downloads_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let path = app.path();
 
     path.download_dir()
@@ -57,10 +59,7 @@ fn sanitize_download_name(file_name: &str) -> String {
     }
 }
 
-fn resolve_unique_download_path(
-    directory: &std::path::Path,
-    file_name: &str,
-) -> std::path::PathBuf {
+fn resolve_unique_download_path(directory: &Path, file_name: &str) -> PathBuf {
     let candidate = directory.join(file_name);
 
     if !candidate.exists() {
@@ -85,6 +84,27 @@ fn resolve_unique_download_path(
     }
 
     directory.join(format!("{stem}-copy{extension}"))
+}
+
+fn replace_file_extension(file_name: &str, extension: &str) -> String {
+    let sanitized = sanitize_download_name(file_name);
+    let path = Path::new(&sanitized);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("mystt-audio");
+
+    format!("{stem}.{extension}")
+}
+
+fn resolve_temp_download_path(file_name: &str) -> PathBuf {
+    let sanitized = sanitize_download_name(file_name);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+
+    std::env::temp_dir().join(format!("mystt-download-{timestamp}-{sanitized}"))
 }
 
 #[tauri::command]
@@ -121,11 +141,10 @@ async fn desktop_download_file(
     app: AppHandle,
     url: String,
     file_name: String,
+    target_format: Option<String>,
 ) -> Result<String, String> {
     let downloads_dir = resolve_downloads_dir(&app)?;
     fs::create_dir_all(&downloads_dir).map_err(|error| error.to_string())?;
-
-    let target_path = resolve_unique_download_path(&downloads_dir, &sanitize_download_name(&file_name));
     let response = reqwest::get(&url)
         .await
         .map_err(|error| error.to_string())?;
@@ -135,6 +154,46 @@ async fn desktop_download_file(
     }
 
     let bytes = response.bytes().await.map_err(|error| error.to_string())?;
+    let format = target_format.unwrap_or_else(|| "original".to_string());
+
+    if format == "mp3" {
+        let temp_input_path = resolve_temp_download_path(&file_name);
+        let output_name = replace_file_extension(&file_name, "mp3");
+        let target_path =
+            resolve_unique_download_path(&downloads_dir, &sanitize_download_name(&output_name));
+        let temp_input_path_str = temp_input_path.to_string_lossy().to_string();
+        let target_path_str = target_path.to_string_lossy().to_string();
+
+        fs::write(&temp_input_path, &bytes).map_err(|error| error.to_string())?;
+
+        let ffmpeg_output = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-i",
+                temp_input_path_str.as_str(),
+                "-vn",
+                "-codec:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                target_path_str.as_str(),
+            ])
+            .output()
+            .map_err(|error| format!("ffmpeg 실행 실패: {error}"))?;
+
+        let _ = fs::remove_file(&temp_input_path);
+
+        if !ffmpeg_output.status.success() {
+            let _ = fs::remove_file(&target_path);
+            let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr);
+            return Err(format!("mp3 변환 실패: {}", stderr.trim()));
+        }
+
+        return Ok(target_path.display().to_string());
+    }
+
+    let target_path =
+        resolve_unique_download_path(&downloads_dir, &sanitize_download_name(&file_name));
     fs::write(&target_path, &bytes).map_err(|error| error.to_string())?;
 
     Ok(target_path.display().to_string())

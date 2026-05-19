@@ -98,6 +98,12 @@ export default function RecorderHomeScreen() {
             서버 큐 상태: <Text style={styles.statusValue}>{recorder.pipelineState}</Text>
           </Text>
           <Text style={styles.statusLine}>
+            화면 유지:{" "}
+            <Text style={styles.statusValue}>
+              {recorder.keepAwakeActive ? "켜짐" : "꺼짐"}
+            </Text>
+          </Text>
+          <Text style={styles.statusLine}>
             마지막 앱 상태: <Text style={styles.statusValue}>{recorder.lastKnownAppState}</Text>
           </Text>
           <Text style={styles.statusLine}>

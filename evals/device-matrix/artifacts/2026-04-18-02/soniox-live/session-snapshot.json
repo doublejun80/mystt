@@ -1,0 +1,888 @@
+{
+  "data": {
+    "id": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "title": "Fresh API Live Smoke",
+    "mode": "meeting",
+    "status": "completed",
+    "startedAt": "2026-04-18T04:47:09.199Z",
+    "projectKey": "smoke",
+    "participants": [],
+    "languageHints": [
+      "ko",
+      "en"
+    ],
+    "localAudioPath": "coffee_shop.mp3",
+    "profile": {
+      "chunkMinutes": 10,
+      "uploadStrategy": "rolling-chunks",
+      "backgroundSurvivalCritical": true,
+      "allowForegroundRealtime": true,
+      "minimumBatteryPercentToStream": 25
+    },
+    "realtimePolicy": "foreground-only",
+    "pendingChunkCount": 0,
+    "artifacts": [
+      {
+        "kind": "raw_transcript_json",
+        "status": "ready"
+      },
+      {
+        "kind": "clean_transcript_md",
+        "status": "ready"
+      },
+      {
+        "kind": "meeting_notes_json",
+        "status": "ready"
+      },
+      {
+        "kind": "meeting_notes_html",
+        "status": "ready"
+      },
+      {
+        "kind": "meeting_notes_docx",
+        "status": "ready"
+      },
+      {
+        "kind": "email_preview_html",
+        "status": "ready"
+      }
+    ]
+  },
+  "snapshot": {
+    "session": {
+      "id": "058268a8-a0af-43e7-ac88-8676413f09d9",
+      "title": "Fresh API Live Smoke",
+      "mode": "meeting",
+      "status": "completed",
+      "startedAt": "2026-04-18T04:47:09.199Z",
+      "projectKey": "smoke",
+      "participants": [],
+      "languageHints": [
+        "ko",
+        "en"
+      ],
+      "localAudioPath": "coffee_shop.mp3",
+      "profile": {
+        "chunkMinutes": 10,
+        "uploadStrategy": "rolling-chunks",
+        "backgroundSurvivalCritical": true,
+        "allowForegroundRealtime": true,
+        "minimumBatteryPercentToStream": 25
+      },
+      "realtimePolicy": "foreground-only",
+      "pendingChunkCount": 0,
+      "artifacts": [
+        {
+          "kind": "raw_transcript_json",
+          "status": "ready"
+        },
+        {
+          "kind": "clean_transcript_md",
+          "status": "ready"
+        },
+        {
+          "kind": "meeting_notes_json",
+          "status": "ready"
+        },
+        {
+          "kind": "meeting_notes_html",
+          "status": "ready"
+        },
+        {
+          "kind": "meeting_notes_docx",
+          "status": "ready"
+        },
+        {
+          "kind": "email_preview_html",
+          "status": "ready"
+        }
+      ]
+    },
+    "transcription": {
+      "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6",
+      "status": "completed",
+      "createdAt": "2026-04-18T04:47:11.595Z",
+      "filename": "coffee_shop.mp3",
+      "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+      "cleanupTargets": [
+        "transcriptions/5df91394-335b-408a-9d5d-68ebb47410c6",
+        "files/e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e"
+      ],
+      "cleanupStatus": "completed",
+      "cleanupRequestedAt": "2026-04-18T04:47:11.703Z",
+      "cleanupCompletedAt": "2026-04-18T04:47:18.459Z"
+    },
+    "transcriptText": "Wh at is y our best s eller h ere ? O ur best s eller h ere is c old bre w ic ed co ff ee and l att es. Ok ay. And on a day l ike tod ay where it 's sn ow ing qu ite a b it, do a lot of people still ord er ic ed co ff ee ? H ere in Ma ine, y es. Re ally ? Y es.",
+    "normalizedTranscript": {
+      "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+      "mode": "meeting",
+      "text": "Wh at is y our best s eller h ere ? O ur best s eller h ere is c old bre w ic ed co ff ee and l att es. Ok ay. And on a day l ike tod ay where it 's sn ow ing qu ite a b it, do a lot of people still ord er ic ed co ff ee ? H ere in Ma ine, y es. Re ally ? Y es.",
+      "segments": [
+        {
+          "id": "token-segment-0",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 600,
+          "endMs": 660,
+          "text": "Wh",
+          "confidence": 0.999943733215332
+        },
+        {
+          "id": "token-segment-1",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 660,
+          "endMs": 720,
+          "text": "at",
+          "confidence": 0.9999876022338867
+        },
+        {
+          "id": "token-segment-2",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 780,
+          "endMs": 840,
+          "text": "is",
+          "confidence": 0.9999345541000366
+        },
+        {
+          "id": "token-segment-3",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 900,
+          "endMs": 960,
+          "text": "y",
+          "confidence": 0.9999878406524658
+        },
+        {
+          "id": "token-segment-4",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 960,
+          "endMs": 1020,
+          "text": "our",
+          "confidence": 0.9999854564666748
+        },
+        {
+          "id": "token-segment-5",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 1020,
+          "endMs": 1080,
+          "text": "best",
+          "confidence": 0.9999299049377441
+        },
+        {
+          "id": "token-segment-6",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 1380,
+          "endMs": 1440,
+          "text": "s",
+          "confidence": 0.5448396801948547
+        },
+        {
+          "id": "token-segment-7",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 1440,
+          "endMs": 1500,
+          "text": "eller",
+          "confidence": 0.9999263286590576
+        },
+        {
+          "id": "token-segment-8",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 1680,
+          "endMs": 1740,
+          "text": "h",
+          "confidence": 0.9999611377716064
+        },
+        {
+          "id": "token-segment-9",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 1740,
+          "endMs": 1800,
+          "text": "ere",
+          "confidence": 0.9999986886978149
+        },
+        {
+          "id": "token-segment-10",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 1860,
+          "endMs": 1920,
+          "text": "?",
+          "confidence": 0.9999945163726807
+        },
+        {
+          "id": "token-segment-11",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 2280,
+          "endMs": 2340,
+          "text": "O",
+          "confidence": 0.9999675750732422
+        },
+        {
+          "id": "token-segment-12",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 2340,
+          "endMs": 2400,
+          "text": "ur",
+          "confidence": 0.9999960660934448
+        },
+        {
+          "id": "token-segment-13",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 2460,
+          "endMs": 2520,
+          "text": "best",
+          "confidence": 0.999980092048645
+        },
+        {
+          "id": "token-segment-14",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 2700,
+          "endMs": 2760,
+          "text": "s",
+          "confidence": 0.9998458623886108
+        },
+        {
+          "id": "token-segment-15",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 2820,
+          "endMs": 2880,
+          "text": "eller",
+          "confidence": 0.9999688863754272
+        },
+        {
+          "id": "token-segment-16",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 3060,
+          "endMs": 3120,
+          "text": "h",
+          "confidence": 0.9999895095825195
+        },
+        {
+          "id": "token-segment-17",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 3180,
+          "endMs": 3240,
+          "text": "ere",
+          "confidence": 0.9999966621398926
+        },
+        {
+          "id": "token-segment-18",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 3300,
+          "endMs": 3360,
+          "text": "is",
+          "confidence": 0.9999946355819702
+        },
+        {
+          "id": "token-segment-19",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 3900,
+          "endMs": 3960,
+          "text": "c",
+          "confidence": 0.9523480534553528
+        },
+        {
+          "id": "token-segment-20",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4020,
+          "endMs": 4080,
+          "text": "old",
+          "confidence": 0.9999884366989136
+        },
+        {
+          "id": "token-segment-21",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4200,
+          "endMs": 4260,
+          "text": "bre",
+          "confidence": 0.9635637402534485
+        },
+        {
+          "id": "token-segment-22",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4320,
+          "endMs": 4380,
+          "text": "w",
+          "confidence": 0.9999537467956543
+        },
+        {
+          "id": "token-segment-23",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4440,
+          "endMs": 4500,
+          "text": "ic",
+          "confidence": 0.8755250573158264
+        },
+        {
+          "id": "token-segment-24",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4560,
+          "endMs": 4620,
+          "text": "ed",
+          "confidence": 0.9999488592147827
+        },
+        {
+          "id": "token-segment-25",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4740,
+          "endMs": 4800,
+          "text": "co",
+          "confidence": 0.9999594688415527
+        },
+        {
+          "id": "token-segment-26",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4800,
+          "endMs": 4860,
+          "text": "ff",
+          "confidence": 0.9999963045120239
+        },
+        {
+          "id": "token-segment-27",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 4980,
+          "endMs": 5040,
+          "text": "ee",
+          "confidence": 0.9994824528694153
+        },
+        {
+          "id": "token-segment-28",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 5820,
+          "endMs": 5880,
+          "text": "and",
+          "confidence": 0.9999786615371704
+        },
+        {
+          "id": "token-segment-29",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 6420,
+          "endMs": 6480,
+          "text": "l",
+          "confidence": 0.9988774061203003
+        },
+        {
+          "id": "token-segment-30",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 6540,
+          "endMs": 6600,
+          "text": "att",
+          "confidence": 0.999977707862854
+        },
+        {
+          "id": "token-segment-31",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 6720,
+          "endMs": 6780,
+          "text": "es.",
+          "confidence": 0.9994018077850342
+        },
+        {
+          "id": "token-segment-32",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 7320,
+          "endMs": 7380,
+          "text": "Ok",
+          "confidence": 0.9998984336853027
+        },
+        {
+          "id": "token-segment-33",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 7500,
+          "endMs": 7560,
+          "text": "ay.",
+          "confidence": 0.9669082760810852
+        },
+        {
+          "id": "token-segment-34",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 8160,
+          "endMs": 8220,
+          "text": "And",
+          "confidence": 0.9999277591705322
+        },
+        {
+          "id": "token-segment-35",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 8280,
+          "endMs": 8340,
+          "text": "on",
+          "confidence": 0.9999970197677612
+        },
+        {
+          "id": "token-segment-36",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 8400,
+          "endMs": 8460,
+          "text": "a",
+          "confidence": 0.999997615814209
+        },
+        {
+          "id": "token-segment-37",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 8640,
+          "endMs": 8700,
+          "text": "day",
+          "confidence": 0.9999758005142212
+        },
+        {
+          "id": "token-segment-38",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 8760,
+          "endMs": 8820,
+          "text": "l",
+          "confidence": 0.9999979734420776
+        },
+        {
+          "id": "token-segment-39",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 8880,
+          "endMs": 8940,
+          "text": "ike",
+          "confidence": 0.9999997615814209
+        },
+        {
+          "id": "token-segment-40",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9000,
+          "endMs": 9060,
+          "text": "tod",
+          "confidence": 0.9999971389770508
+        },
+        {
+          "id": "token-segment-41",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9120,
+          "endMs": 9180,
+          "text": "ay",
+          "confidence": 0.8354507088661194
+        },
+        {
+          "id": "token-segment-42",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9360,
+          "endMs": 9420,
+          "text": "where",
+          "confidence": 0.9994913339614868
+        },
+        {
+          "id": "token-segment-43",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9540,
+          "endMs": 9600,
+          "text": "it",
+          "confidence": 0.9999973773956299
+        },
+        {
+          "id": "token-segment-44",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9600,
+          "endMs": 9660,
+          "text": "'s",
+          "confidence": 0.9999737739562988
+        },
+        {
+          "id": "token-segment-45",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9720,
+          "endMs": 9780,
+          "text": "sn",
+          "confidence": 0.9999178647994995
+        },
+        {
+          "id": "token-segment-46",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9780,
+          "endMs": 9840,
+          "text": "ow",
+          "confidence": 0.999985933303833
+        },
+        {
+          "id": "token-segment-47",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 9900,
+          "endMs": 9960,
+          "text": "ing",
+          "confidence": 0.9999896287918091
+        },
+        {
+          "id": "token-segment-48",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 10020,
+          "endMs": 10080,
+          "text": "qu",
+          "confidence": 0.9999961853027344
+        },
+        {
+          "id": "token-segment-49",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 10080,
+          "endMs": 10140,
+          "text": "ite",
+          "confidence": 0.9999814033508301
+        },
+        {
+          "id": "token-segment-50",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 10140,
+          "endMs": 10200,
+          "text": "a",
+          "confidence": 0.9999954700469971
+        },
+        {
+          "id": "token-segment-51",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 10320,
+          "endMs": 10380,
+          "text": "b",
+          "confidence": 0.9146252870559692
+        },
+        {
+          "id": "token-segment-52",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 10440,
+          "endMs": 10500,
+          "text": "it,",
+          "confidence": 0.9859095215797424
+        },
+        {
+          "id": "token-segment-53",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 11100,
+          "endMs": 11160,
+          "text": "do",
+          "confidence": 0.9995335936546326
+        },
+        {
+          "id": "token-segment-54",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 11220,
+          "endMs": 11280,
+          "text": "a",
+          "confidence": 0.9999842643737793
+        },
+        {
+          "id": "token-segment-55",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 11280,
+          "endMs": 11340,
+          "text": "lot",
+          "confidence": 0.9999979734420776
+        },
+        {
+          "id": "token-segment-56",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 11400,
+          "endMs": 11460,
+          "text": "of",
+          "confidence": 0.9999982118606567
+        },
+        {
+          "id": "token-segment-57",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 11460,
+          "endMs": 11520,
+          "text": "people",
+          "confidence": 0.999991774559021
+        },
+        {
+          "id": "token-segment-58",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 11760,
+          "endMs": 11820,
+          "text": "still",
+          "confidence": 0.9999991655349731
+        },
+        {
+          "id": "token-segment-59",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 12180,
+          "endMs": 12240,
+          "text": "ord",
+          "confidence": 0.9999799728393555
+        },
+        {
+          "id": "token-segment-60",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 12420,
+          "endMs": 12480,
+          "text": "er",
+          "confidence": 0.9999988079071045
+        },
+        {
+          "id": "token-segment-61",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 12660,
+          "endMs": 12720,
+          "text": "ic",
+          "confidence": 0.997510552406311
+        },
+        {
+          "id": "token-segment-62",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 12720,
+          "endMs": 12780,
+          "text": "ed",
+          "confidence": 0.999997615814209
+        },
+        {
+          "id": "token-segment-63",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 12900,
+          "endMs": 12960,
+          "text": "co",
+          "confidence": 0.9999932050704956
+        },
+        {
+          "id": "token-segment-64",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 12960,
+          "endMs": 13020,
+          "text": "ff",
+          "confidence": 0.9999983310699463
+        },
+        {
+          "id": "token-segment-65",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 13080,
+          "endMs": 13140,
+          "text": "ee",
+          "confidence": 0.9999669790267944
+        },
+        {
+          "id": "token-segment-66",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 13200,
+          "endMs": 13260,
+          "text": "?",
+          "confidence": 0.9999885559082031
+        },
+        {
+          "id": "token-segment-67",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 13500,
+          "endMs": 13560,
+          "text": "H",
+          "confidence": 0.9998576641082764
+        },
+        {
+          "id": "token-segment-68",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 13560,
+          "endMs": 13620,
+          "text": "ere",
+          "confidence": 0.9999492168426514
+        },
+        {
+          "id": "token-segment-69",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 13680,
+          "endMs": 13740,
+          "text": "in",
+          "confidence": 0.9999874830245972
+        },
+        {
+          "id": "token-segment-70",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 13800,
+          "endMs": 13860,
+          "text": "Ma",
+          "confidence": 0.9990772008895874
+        },
+        {
+          "id": "token-segment-71",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 13920,
+          "endMs": 13980,
+          "text": "ine,",
+          "confidence": 0.9988695979118347
+        },
+        {
+          "id": "token-segment-72",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 14100,
+          "endMs": 14160,
+          "text": "y",
+          "confidence": 0.9999960660934448
+        },
+        {
+          "id": "token-segment-73",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 14220,
+          "endMs": 14280,
+          "text": "es.",
+          "confidence": 0.9999785423278809
+        },
+        {
+          "id": "token-segment-74",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 14520,
+          "endMs": 14580,
+          "text": "Re",
+          "confidence": 0.9999548196792603
+        },
+        {
+          "id": "token-segment-75",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 14640,
+          "endMs": 14700,
+          "text": "ally",
+          "confidence": 0.9996609687805176
+        },
+        {
+          "id": "token-segment-76",
+          "speaker": "1",
+          "language": "en",
+          "startMs": 14700,
+          "endMs": 14760,
+          "text": "?",
+          "confidence": 0.9999853372573853
+        },
+        {
+          "id": "token-segment-77",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 14940,
+          "endMs": 15000,
+          "text": "Y",
+          "confidence": 0.9998947381973267
+        },
+        {
+          "id": "token-segment-78",
+          "speaker": "2",
+          "language": "en",
+          "startMs": 15060,
+          "endMs": 15120,
+          "text": "es.",
+          "confidence": 0.9999760389328003
+        }
+      ],
+      "speakers": [
+        "1",
+        "2"
+      ],
+      "lowConfidenceMoments": [
+        {
+          "speaker": "1",
+          "text": "s",
+          "startMs": 1380,
+          "endMs": 1440,
+          "confidence": 0.5448396801948547
+        }
+      ],
+      "durationMs": 15120
+    },
+    "notes": {
+      "model": "gpt-5.4-mini",
+      "notes": {
+        "mode": "meeting",
+        "title": "Fresh API Live Smoke",
+        "summary": "대화는 매장 인기 메뉴와 눈 오는 날의 주문 패턴을 확인하는 짧은 스모크 테스트 성격의 질의응답이었다. 가장 잘 팔리는 음료는 콜드브루 아이스커피와 라떼이며, 메인주에서는 눈이 오는 날에도 아이스커피를 주문하는 사람이 많다는 점이 확인되었다.",
+        "decisions": [
+          {
+            "decision": "가장 잘 팔리는 메뉴는 콜드브루 아이스커피와 라떼로 정리한다.",
+            "rationale": "응답자가 직접 베스트셀러를 언급했다.",
+            "evidence": {
+              "speaker": "",
+              "quote": "Our best seller here is cold brew iced coffee and lattes.",
+              "timestampRange": "00:00-00:00"
+            }
+          },
+          {
+            "decision": "눈이 오는 날에도 메인주에서는 아이스커피 수요가 있다고 본다.",
+            "rationale": "질문에 대해 현지에서는 그렇다고 답했다.",
+            "evidence": {
+              "speaker": "",
+              "quote": "Here in Maine, yes.",
+              "timestampRange": "00:00-00:00"
+            }
+          }
+        ],
+        "actionItems": [],
+        "risks": [],
+        "openQuestions": [],
+        "nextAgenda": [],
+        "speakerHighlights": [
+          {
+            "speaker": "Speaker 1",
+            "summary": "베스트셀러 음료와 눈 오는 날의 아이스커피 주문 여부에 대해 간단히 답했다."
+          }
+        ]
+      },
+      "createdAt": "2026-04-18T04:47:17.743Z"
+    }
+  }
+}

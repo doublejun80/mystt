@@ -1,0 +1,37 @@
+{
+  "lane": "desktop",
+  "runId": "2026-04-18-02",
+  "status": "pass",
+  "automated": {
+    "preflight": "API /health OK, local portal OK, Docker daemon unavailable warning retained",
+    "desktopTestPassed": true,
+    "typecheckPassed": true,
+    "buildPassed": true
+  },
+  "capturedFields": {
+    "appDataDir": "/Users/doublejun/Library/Application Support/digital.doublejun.mystt.desktop",
+    "recorderRoot": "/Users/doublejun/Library/Application Support/digital.doublejun.mystt.desktop/mystt-recorder",
+    "recordingsRoot": "/Users/doublejun/Library/Application Support/digital.doublejun.mystt.desktop/mystt-recorder/recordings",
+    "runtimeStatePath": "/Users/doublejun/Library/Application Support/digital.doublejun.mystt.desktop/mystt-recorder/runtime-state.json",
+    "savedSessionCount": 0,
+    "recentSessions": "없음",
+    "localPortalTarget": "http://127.0.0.1:3203",
+    "hostedPortalTarget": "https://mystt.doublejun.digital",
+    "persistenceSummary": "Postgres local-fallback / MinIO local-fallback / Queue inline-fallback"
+  },
+  "evidence": {
+    "initialWindow": "tauri-window-initial.png",
+    "diagnosticsTop": "tauri-window-diagnostics-autostart.png",
+    "shellSummary": "tauri-window-shell-summary.png",
+    "portalTargets": "tauri-window-targets.png",
+    "keepAwakeOff": "tauri-window-keep-awake-off.png",
+    "keepAwakeOn": "tauri-window-keep-awake.png",
+    "preflight": "preflight.txt",
+    "apiHealth": "api-health.json"
+  },
+  "notes": [
+    "Diagnostics overlay and section scroll were opened with VITE_DESKTOP_OPEN_DIAGNOSTICS / VITE_DESKTOP_SCROLL_TARGET verification helpers.",
+    "keep-awake transition verified as off -> on by paired Tauri screenshots and caffeinate process presence when autostart flag was enabled.",
+    "Docker daemon remained unavailable, but desktop/Tauri verification did not require Docker once local API and portal were live."
+  ]
+}

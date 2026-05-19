@@ -1,5 +1,5 @@
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   buildRecorderSurvivalSummary,
   type RecorderRuntimeState,
@@ -7,11 +7,10 @@ import {
 } from "@mystt/audio-core";
 
 import {
-  fetchInsforgeDesktopSession,
-  refreshInsforgeDesktopSession,
-  signInWithInsforgeDesktop,
-  signUpWithInsforgeDesktop
-} from "./lib/insforge";
+  buildRecentSessionLines,
+  formatDesktopBridgeError,
+  resolveDesktopVerificationOptions
+} from "./verification";
 
 type Target = {
   label: string;
@@ -24,25 +23,34 @@ type ProbeResult = Target & {
   ok: boolean;
 };
 
+type PersistenceStatus = {
+  configured: boolean;
+  mode: "disabled" | "remote" | "local-fallback";
+  lastLoadOk: boolean | null;
+  lastWriteOk: boolean | null;
+  lastReadOk: boolean | null;
+  lastError?: string;
+};
+
+type QueueStatus = {
+  configured: boolean;
+  mode: "disabled" | "remote" | "inline-fallback";
+  depth: number | null;
+  lastEnqueueOk: boolean | null;
+  lastDepthOk: boolean | null;
+  lastError?: string;
+};
+
 type ApiHealthResponse = {
   ok: boolean;
+  now: string;
+  providers?: {
+    sonioxConfigured: boolean;
+    openaiConfigured: boolean;
+  };
   persistence?: {
-    postgres?: {
-      configured: boolean;
-      mode: "disabled" | "remote" | "local-fallback";
-      lastLoadOk: boolean | null;
-      lastWriteOk: boolean | null;
-      lastReadOk: boolean | null;
-      lastError?: string;
-    };
-    minio?: {
-      configured: boolean;
-      mode: "disabled" | "remote" | "local-fallback";
-      lastLoadOk: boolean | null;
-      lastWriteOk: boolean | null;
-      lastReadOk: boolean | null;
-      lastError?: string;
-    };
+    postgres?: PersistenceStatus;
+    minio?: PersistenceStatus;
     paths?: {
       dataRoot: string;
       stateFile: string;
@@ -51,62 +59,7 @@ type ApiHealthResponse = {
       audioRoot: string;
     };
   };
-  integrations?: {
-    insforgeConfigured?: boolean;
-    insforgeAdminConfigured?: boolean;
-    insforge?: {
-      configured: boolean;
-      adminConfigured: boolean;
-      shadowWriteEnabled: boolean;
-      baseUrl?: string;
-      lastPublicConfigOk: boolean | null;
-      lastSessionOk: boolean | null;
-      lastStorageOk: boolean | null;
-      lastShadowWriteOk: boolean | null;
-      lastError?: string;
-    };
-  };
-};
-
-type InsforgeStatusEnvelope = {
-  data?: ApiHealthResponse["integrations"] extends infer T
-    ? T extends { insforge?: infer U }
-      ? U
-      : never
-    : never;
-};
-
-type InsforgeAuthConfigEnvelope = {
-  data: {
-    passwordMinLength: number;
-    requireEmailVerification: boolean;
-    oAuthProviders: string[];
-    verifyEmailMethod?: string;
-  };
-};
-
-type InsforgeBucketsEnvelope = {
-  data: Array<{
-    name: string;
-    public: boolean;
-    createdAt?: string;
-  }>;
-};
-
-type StoredDesktopAuthState = {
-  email: string;
-  accessToken: string;
-  refreshToken?: string | null;
-};
-
-type CurrentSessionRecord = {
-  user: {
-    id: string;
-    email?: string;
-    emailVerified?: boolean;
-    providers?: string[];
-    [key: string]: unknown;
-  };
+  queue?: QueueStatus;
 };
 
 type DesktopShellStatus = {
@@ -128,7 +81,6 @@ type DesktopKeepAwakeStatus = {
 };
 
 const apiBaseUrl = "http://127.0.0.1:4100";
-const desktopSessionStorageKey = "mystt.insforge.desktop.session";
 
 const targets: Target[] = [
   {
@@ -148,6 +100,7 @@ const targets: Target[] = [
 let latestProbeResults: ProbeResult[] = [];
 let currentTarget: ProbeResult | null = null;
 let latestDesktopShellStatus: DesktopShellStatus | null = null;
+const verificationOptions = resolveDesktopVerificationOptions(import.meta.env);
 
 function buildPortalUrl(url: string) {
   const separator = url.includes("?") ? "&" : "?";
@@ -245,7 +198,11 @@ async function clearDesktopRecorderRuntime() {
   return invoke<TauriRecorderStoreStatus>("desktop_recorder_clear_runtime");
 }
 
-async function downloadFileToDesktop(input: { url: string; fileName: string }) {
+async function downloadFileToDesktop(input: {
+  url: string;
+  fileName: string;
+  targetFormat?: "original" | "mp3";
+}) {
   return invoke<string>("desktop_download_file", input);
 }
 
@@ -306,149 +263,6 @@ function setSettingsOpen(open: boolean) {
   document.body.classList.toggle("settings-open", open);
 }
 
-function updateLoginMessage(message: string) {
-  const element = document.querySelector<HTMLElement>("#insforge-login-message");
-  if (element) {
-    element.textContent = message;
-  }
-}
-
-function syncAuthButton(input: {
-  stored: StoredDesktopAuthState | null;
-  session: CurrentSessionRecord | null;
-}) {
-  const button = document.querySelector<HTMLButtonElement>("#open-login");
-
-  if (!button) {
-    return;
-  }
-
-  const isLoggedIn = Boolean(input.stored && input.session);
-  button.textContent = isLoggedIn ? "로그아웃" : "로그인";
-  button.dataset.mode = isLoggedIn ? "logout" : "login";
-  button.classList.toggle("button-primary", !isLoggedIn);
-}
-
-function prefillEmail(email?: string) {
-  const input = document.querySelector<HTMLInputElement>("#insforge-email");
-  if (input && email) {
-    input.value = email;
-  }
-}
-
-function loadStoredDesktopAuthState(): StoredDesktopAuthState | null {
-  try {
-    const raw = window.localStorage.getItem(desktopSessionStorageKey);
-    if (!raw) {
-      return null;
-    }
-
-    return JSON.parse(raw) as StoredDesktopAuthState;
-  } catch {
-    return null;
-  }
-}
-
-function saveStoredDesktopAuthState(state: StoredDesktopAuthState) {
-  window.localStorage.setItem(desktopSessionStorageKey, JSON.stringify(state));
-}
-
-function clearStoredDesktopAuthState() {
-  window.localStorage.removeItem(desktopSessionStorageKey);
-}
-
-async function resolveDesktopSessionState() {
-  const stored = loadStoredDesktopAuthState();
-
-  if (!stored) {
-    return {
-      stored: null,
-      session: null
-    };
-  }
-
-  try {
-    const session = await fetchInsforgeDesktopSession(stored.accessToken);
-    updateLoginMessage(`${session.user.email ?? stored.email} 로그인 상태입니다.`);
-    return {
-      stored,
-      session
-    };
-  } catch {
-    if (!stored.refreshToken) {
-      clearStoredDesktopAuthState();
-      updateLoginMessage("저장된 세션이 만료되었습니다. 다시 로그인해 주세요.");
-      return {
-        stored: null,
-        session: null
-      };
-    }
-
-    let refreshed;
-    try {
-      refreshed = await refreshInsforgeDesktopSession({
-        refreshToken: stored.refreshToken
-      });
-    } catch {
-      clearStoredDesktopAuthState();
-      updateLoginMessage("세션 갱신에 실패했습니다. 다시 로그인해 주세요.");
-      return {
-        stored: null,
-        session: null
-      };
-    }
-
-    if (!refreshed.accessToken) {
-      clearStoredDesktopAuthState();
-      updateLoginMessage("세션 갱신에 실패했습니다. 다시 로그인해 주세요.");
-      return {
-        stored: null,
-        session: null
-      };
-    }
-
-    const nextStored = {
-      email: refreshed.user.email ?? stored.email,
-      accessToken: refreshed.accessToken,
-      refreshToken: refreshed.refreshToken ?? stored.refreshToken
-    };
-
-    saveStoredDesktopAuthState(nextStored);
-    try {
-      const session = await fetchInsforgeDesktopSession(nextStored.accessToken);
-      updateLoginMessage(`${session.user.email ?? nextStored.email} 로그인 상태입니다.`);
-      return {
-        stored: nextStored,
-        session
-      };
-    } catch {
-      updateLoginMessage(`${refreshed.user.email ?? nextStored.email} 로그인 상태입니다.`);
-      return {
-        stored: nextStored,
-        session: {
-          user: refreshed.user
-        }
-      };
-    }
-  }
-}
-
-async function loadInsforgeState() {
-  const [health, status, authConfig, buckets] = await Promise.allSettled([
-    requestJson<ApiHealthResponse>("/health"),
-    requestJson<InsforgeStatusEnvelope>("/v1/insforge/status"),
-    requestJson<InsforgeAuthConfigEnvelope>("/v1/insforge/auth/public-config"),
-    requestJson<InsforgeBucketsEnvelope>("/v1/insforge/storage/buckets")
-  ]);
-
-  return {
-    health,
-    status,
-    authConfig,
-    buckets
-  };
-}
-
 function renderTargetList(selector: string, results: ProbeResult[]) {
   const container = document.querySelector<HTMLDivElement>(selector);
 
@@ -503,75 +317,130 @@ function renderPortalState(result: ProbeResult | null) {
   fallback.hidden = true;
 }
 
-function renderInsforgeState(input: Awaited<ReturnType<typeof loadInsforgeState>>) {
-  const title = document.querySelector<HTMLElement>("#insforge-title");
-  const detail = document.querySelector<HTMLElement>("#insforge-detail");
-  const pill = document.querySelector<HTMLElement>("#insforge-pill");
-  const summary = document.querySelector<HTMLDivElement>("#insforge-status-summary");
-  const buckets = document.querySelector<HTMLDivElement>("#insforge-buckets");
+function describePersistenceStatus(status?: PersistenceStatus) {
+  if (!status) {
+    return "상태 확인 중";
+  }
 
-  if (!title || !detail || !pill || !summary || !buckets) {
+  if (!status.configured) {
+    return "구성 안 됨";
+  }
+
+  if (status.lastError) {
+    return status.lastError;
+  }
+
+  if (status.mode === "remote") {
+    return "원격 persistence 사용 중";
+  }
+
+  if (status.mode === "local-fallback") {
+    return "원격 장애 시 로컬 fallback 유지";
+  }
+
+  return "비활성";
+}
+
+function describeQueueStatus(queue?: QueueStatus) {
+  if (!queue) {
+    return "상태 확인 중";
+  }
+
+  if (!queue.configured) {
+    return "구성 안 됨";
+  }
+
+  if (queue.lastError) {
+    return queue.lastError;
+  }
+
+  const depthLabel = queue.depth == null ? "깊이 미확인" : `대기 ${queue.depth}`;
+  return `${queue.mode} · ${depthLabel}`;
+}
+
+function renderPersistenceState(input: {
+  health: ApiHealthResponse | null;
+  errorMessage?: string;
+}) {
+  const title = document.querySelector<HTMLElement>("#persistence-title");
+  const detail = document.querySelector<HTMLElement>("#persistence-detail");
+  const pill = document.querySelector<HTMLElement>("#persistence-pill");
+  const diagnosticsPill = document.querySelector<HTMLElement>("#diagnostics-pill");
+  const summary = document.querySelector<HTMLDivElement>("#persistence-summary");
+  const paths = document.querySelector<HTMLDivElement>("#persistence-paths");
+  const diagnostics = document.querySelector<HTMLDetailsElement>("#desktop-diagnostics");
+
+  if (!title || !detail || !pill || !diagnosticsPill || !summary || !paths) {
     return;
   }
 
-  const health = input.health.status === "fulfilled" ? input.health.value : undefined;
-  const runtime = input.status.status === "fulfilled" ? input.status.value.data : undefined;
-  const authConfig =
-    input.authConfig.status === "fulfilled" ? input.authConfig.value.data : undefined;
-  const bucketList =
-    input.buckets.status === "fulfilled" ? input.buckets.value.data : [];
-  const bucketError = input.buckets.status === "rejected" ? input.buckets.reason : undefined;
-  const connected = Boolean(runtime?.configured && health?.integrations?.insforgeConfigured);
-  const diagnostics = document.querySelector<HTMLDetailsElement>("#insforge-diagnostics");
+  if (!input.health) {
+    title.textContent = "API persistence 상태를 읽지 못했습니다.";
+    detail.textContent =
+      input.errorMessage ?? "API가 아직 떠 있지 않거나 `/health` 응답이 준비되지 않았습니다.";
+    pill.textContent = "주의";
+    diagnosticsPill.textContent = "주의";
+    summary.innerHTML = `
+      <article class="metric-card">
+        <p class="metric-label">상태</p>
+        <strong class="metric-value metric-value-small">헬스체크 실패</strong>
+        <p class="metric-detail">${detail.textContent}</p>
+      </article>
+    `;
+    paths.innerHTML = "";
+    if (diagnostics) {
+      diagnostics.open = true;
+    }
+    return;
+  }
 
-  title.textContent = connected ? "InsForge 연결됨" : "InsForge 연결 미완료";
-  detail.textContent = runtime?.lastError
-    ? `최근 오류: ${runtime.lastError}`
-    : runtime?.baseUrl
-      ? `${runtime.baseUrl}와 bridge를 연결했습니다.`
-      : "InsForge base URL이 아직 API에 반영되지 않았습니다.";
-  pill.textContent = connected ? "연결됨" : "점검 필요";
+  const postgres = input.health.persistence?.postgres;
+  const minio = input.health.persistence?.minio;
+  const queue = input.health.queue;
+  const providers = input.health.providers;
+  const pathsState = input.health.persistence?.paths;
+  const storageReady = postgres?.mode === "remote" && minio?.mode === "remote";
+  const needsAttention = Boolean(postgres?.lastError || minio?.lastError || queue?.lastError);
 
-  if (diagnostics && runtime?.lastError) {
+  title.textContent = storageReady
+    ? "서버 persistence 연결됨"
+    : "fallback 포함 상태 점검";
+  detail.textContent = [
+    `Postgres ${postgres?.mode ?? "확인 중"}`,
+    `MinIO ${minio?.mode ?? "확인 중"}`,
+    `Queue ${queue?.mode ?? "확인 중"}`,
+    "현재 데스크톱 셸은 로컬/무인증 검토 경로를 유지합니다."
+  ].join(" · ");
+  pill.textContent = needsAttention ? "주의" : storageReady ? "정상" : "확인";
+  diagnosticsPill.textContent = pill.textContent;
+
+  if (diagnostics && needsAttention) {
     diagnostics.open = true;
   }
 
   summary.innerHTML = [
     {
-      label: "Base URL",
-      value: runtime?.baseUrl ?? "없음",
-      detail: health?.integrations?.insforgeAdminConfigured ? "admin token 연결" : "admin token 미확인"
+      label: "Postgres",
+      value: postgres?.mode ?? "확인 중",
+      detail: describePersistenceStatus(postgres)
     },
     {
-      label: "Public Auth",
+      label: "MinIO",
+      value: minio?.mode ?? "확인 중",
+      detail: describePersistenceStatus(minio)
+    },
+    {
+      label: "Queue",
+      value: queue?.mode ?? "확인 중",
+      detail: describeQueueStatus(queue)
+    },
+    {
+      label: "자동 처리",
       value:
-        input.authConfig.status === "fulfilled"
-          ? `비밀번호 ${authConfig?.passwordMinLength ?? "-"}자`
-          : "실패",
-      detail:
-        input.authConfig.status === "fulfilled"
-          ? `이메일 검증 ${authConfig?.requireEmailVerification ? "필수" : "선택"}`
-          : "public config 확인 필요"
-    },
-    {
-      label: "Shadow Write",
-      value: runtime?.shadowWriteEnabled ? "켜짐" : "꺼짐",
-      detail:
-        runtime?.lastShadowWriteOk == null
-          ? "아직 artifact 쓰기 전"
-          : runtime.lastShadowWriteOk
-            ? "최근 쓰기 성공"
-            : "최근 쓰기 실패"
-    },
-    {
-      label: "Storage Buckets",
-      value: `${bucketList.length}개`,
-      detail:
-        bucketError instanceof Error
-          ? bucketError.message
-          : bucketList.length > 0
-            ? "목록 조회 성공"
-            : "목록 비어 있음"
+        providers?.sonioxConfigured && providers?.openaiConfigured ? "준비됨" : "점검 필요",
+      detail: `Soniox ${providers?.sonioxConfigured ? "on" : "off"} / OpenAI ${
+        providers?.openaiConfigured ? "on" : "off"
+      }`
     }
   ]
     .map(
@@ -585,121 +454,37 @@ function renderInsforgeState(input: Awaited<ReturnType<typeof loadInsforgeState>
     )
     .join("");
 
-  if (health?.persistence?.paths) {
-    summary.insertAdjacentHTML(
-      "beforeend",
-      [
-        {
-          label: "원본 오디오",
-          value: health.persistence.paths.audioRoot,
-          detail: `MinIO ${health.persistence.minio?.mode ?? "확인 중"}`
-        },
-        {
-          label: "아티팩트",
-          value: health.persistence.paths.artifactRoot,
-          detail: `InsForge shadow write ${health.integrations?.insforge?.shadowWriteEnabled ? "켜짐" : "꺼짐"}`
-        },
-        {
-          label: "상태 파일",
-          value: health.persistence.paths.stateFile,
-          detail: "세션/캐시 저장"
-        },
-        {
-          label: "감사 로그",
-          value: health.persistence.paths.auditLogFile,
-          detail: "audit trail 저장"
-        }
-      ]
-        .map(
-          (metric) => `
-            <article class="metric-card">
-              <p class="metric-label">${metric.label}</p>
-              <strong class="metric-value metric-value-small">${metric.value}</strong>
-              <p class="metric-detail">${metric.detail}</p>
-            </article>
-          `
-        )
-        .join("")
-    );
-  }
-
-  buckets.innerHTML = bucketList.length
-    ? bucketList
-        .map(
-          (bucket) => `
-            <article class="platform-card">
-              <p class="target-label">bucket</p>
-              <strong>${bucket.name}</strong>
-            </article>
-          `
-        )
-        .join("")
-    : `
-        <article class="platform-card">
-          <p class="target-label">bucket</p>
-          <strong>${bucketError ? "조회 실패" : "아직 없음"}</strong>
-        </article>
-      `;
-}
-
-function renderSessionState(input: {
-  stored: StoredDesktopAuthState | null;
-  session: CurrentSessionRecord | null;
-}) {
-  const summary = document.querySelector<HTMLDivElement>("#session-summary");
-  const checklist = document.querySelector<HTMLUListElement>("#session-checklist");
-
-  if (!summary || !checklist) {
+  if (!pathsState) {
+    paths.innerHTML = `
+      <article class="metric-card">
+        <p class="metric-label">경로</p>
+        <strong class="metric-value metric-value-small">미확인</strong>
+        <p class="metric-detail">.data fallback 경로를 아직 읽지 못했습니다.</p>
+      </article>
+    `;
     return;
   }
 
-  syncAuthButton(input);
-
-  if (!input.session || !input.stored) {
-    summary.innerHTML = [
-      {
-        label: "로그인 상태",
-        value: "로그아웃",
-        detail: "설정에서 이메일/비밀번호로 로그인하거나 계정을 만들 수 있습니다."
-      }
-    ]
-      .map(
-        (metric) => `
-          <article class="metric-card">
-            <p class="metric-label">${metric.label}</p>
-            <strong class="metric-value metric-value-small">${metric.value}</strong>
-            <p class="metric-detail">${metric.detail}</p>
-          </article>
-        `
-      )
-      .join("");
-    checklist.innerHTML = [
-      "<li>저장된 세션이 없습니다.</li>",
-      "<li>필요하면 같은 창에서 바로 계정을 만들 수 있습니다.</li>"
-    ].join("");
-    return;
-  }
-
-  summary.innerHTML = [
+  paths.innerHTML = [
     {
-      label: "이메일",
-      value: input.session.user.email ?? input.stored.email,
-      detail: "현재 저장된 desktop session"
+      label: "원본 오디오",
+      value: pathsState.audioRoot,
+      detail: "로컬 원본 오디오 fallback 경로"
     },
     {
-      label: "이메일 인증",
-      value: input.session.user.emailVerified ? "완료" : "미완료",
-      detail: "InsForge auth user record 기준"
+      label: "아티팩트",
+      value: pathsState.artifactRoot,
+      detail: "회의록/전사 산출물 fallback 경로"
     },
     {
-      label: "제공자",
-      value: input.session.user.providers?.join(", ") ?? "email",
-      detail: "현재 로그인 공급자"
+      label: "세션 상태",
+      value: pathsState.stateFile,
+      detail: "API 상태 캐시"
     },
     {
-      label: "Refresh Token",
-      value: input.stored.refreshToken ? "있음" : "없음",
-      detail: "만료 시 자동 갱신에 사용"
+      label: "감사 로그",
+      value: pathsState.auditLogFile,
+      detail: "audit trail append log"
     }
   ]
     .map(
@@ -712,11 +497,6 @@ function renderSessionState(input: {
       `
     )
     .join("");
-
-  checklist.innerHTML = [
-    `<li>${input.session.user.email ?? input.stored.email} 계정으로 로그인되어 있습니다.</li>`,
-    `<li>세션 확인 버튼으로 현재 access token 유효성을 다시 점검할 수 있습니다.</li>`
-  ].join("");
 }
 
 function renderDesktopShellStatus(status: DesktopShellStatus | null) {
@@ -751,15 +531,15 @@ function renderDesktopShellStatus(status: DesktopShellStatus | null) {
       value: status.appDataDir,
       detail: "데스크톱 셸 로컬 상태"
     },
-        {
-          label: "다운로드",
-          value: status.downloadsDir,
-          detail: "음성 파일과 문서 기본 저장 폴더"
-        },
-        {
-          label: "Recorder 루트",
-          value: status.recorderRoot,
-          detail: "장시간 녹음 원본/런타임 상태 기준 경로"
+    {
+      label: "다운로드",
+      value: status.downloadsDir,
+      detail: "음성 파일과 문서 기본 저장 폴더"
+    },
+    {
+      label: "Recorder 루트",
+      value: status.recorderRoot,
+      detail: "장시간 녹음 원본/런타임 상태 기준 경로"
     },
     {
       label: "Runtime 상태",
@@ -818,7 +598,9 @@ function renderDesktopKeepAwakeStatus(status: DesktopKeepAwakeStatus | null) {
     return;
   }
 
-  title.textContent = status.active ? "노트북 장시간 보호가 켜져 있습니다." : "노트북 장시간 보호가 꺼져 있습니다.";
+  title.textContent = status.active
+    ? "노트북 장시간 보호가 켜져 있습니다."
+    : "노트북 장시간 보호가 꺼져 있습니다.";
   detail.textContent = status.detail;
   pill.textContent = status.active ? "켜짐" : "꺼짐";
   startButton.disabled = status.active;
@@ -852,7 +634,7 @@ function renderDesktopRecorderStoreStatus(status: TauriRecorderStoreStatus | nul
         <p class="metric-detail">Tauri recorder ledger 응답을 기다리는 중입니다.</p>
       </article>
     `;
-    checklist.innerHTML = ["<li>로컬 recorder 저장소 상태를 아직 읽지 못했습니다.</li>"].join("");
+    checklist.innerHTML = "<li>로컬 recorder 저장소 상태를 아직 읽지 못했습니다.</li>";
     clearButton.disabled = true;
     return;
   }
@@ -863,7 +645,6 @@ function renderDesktopRecorderStoreStatus(status: TauriRecorderStoreStatus | nul
   const latestTitle =
     latestSession &&
     typeof latestSession === "object" &&
-    latestSession &&
     "session" in latestSession &&
     latestSession.session &&
     typeof latestSession.session === "object" &&
@@ -873,7 +654,6 @@ function renderDesktopRecorderStoreStatus(status: TauriRecorderStoreStatus | nul
   const latestSavedAt =
     latestSession &&
     typeof latestSession === "object" &&
-    latestSession &&
     "savedAt" in latestSession
       ? String(latestSession.savedAt)
       : "기록 없음";
@@ -915,10 +695,13 @@ function renderDesktopRecorderStoreStatus(status: TauriRecorderStoreStatus | nul
     ? [
         `<li>${survivalSummary.headline}</li>`,
         `<li>${survivalSummary.detail}</li>`,
-        ...survivalSummary.recentEvidence.map((entry) => `<li>${entry}</li>`)
+        ...survivalSummary.recentEvidence.map((entry) => `<li>${entry}</li>`),
+        ...buildRecentSessionLines(status.recentSessions).map((entry) => `<li>${entry}</li>`)
       ]
     : [
         "<li>현재 복구 후보는 없습니다.</li>",
+        `<li>saved_session_count: ${status.savedSessionCount}</li>`,
+        ...buildRecentSessionLines(status.recentSessions).map((entry) => `<li>${entry}</li>`),
         `<li>로컬 recorder 루트: ${status.recorderRoot}</li>`,
         "<li>다음 desktop recorder 어댑터가 이 저장소를 그대로 사용합니다.</li>"
       ];
@@ -934,44 +717,30 @@ async function renderPortalTargets() {
   renderPortalState(latestProbeResults.find((item) => item.ok) ?? null);
 }
 
-async function refreshInsforgePanel() {
-  const [insforgeState, shellStatus, keepAwakeStatus, recorderStoreStatus] = await Promise.all([
-    loadInsforgeState(),
+async function refreshDesktopDiagnostics() {
+  const [health, shellStatus, keepAwakeStatus, recorderStoreStatus] = await Promise.allSettled([
+    requestJson<ApiHealthResponse>("/health"),
     loadDesktopShellStatus(),
     loadDesktopKeepAwakeStatus(),
     loadDesktopRecorderStoreStatus()
   ]);
-  renderInsforgeState(insforgeState);
-  renderDesktopShellStatus(shellStatus);
-  renderDesktopKeepAwakeStatus(keepAwakeStatus);
-  renderDesktopRecorderStoreStatus(recorderStoreStatus);
-  const resolvedSession = await resolveDesktopSessionState();
-  renderSessionState(resolvedSession);
-  prefillEmail(resolvedSession.stored?.email);
-}
 
-async function finishAuthSuccess(input: {
-  stored: StoredDesktopAuthState;
-  session: CurrentSessionRecord;
-  message: string;
-}) {
-  const frame = document.querySelector<HTMLIFrameElement>("#portal-frame");
-  const nextUrl = buildPortalUrl(currentTarget?.url ?? targets[0].url);
-
-  updateLoginMessage(input.message);
-  renderSessionState({
-    stored: input.stored,
-    session: input.session
+  renderPersistenceState({
+    health: health.status === "fulfilled" ? health.value : null,
+    errorMessage:
+      health.status === "rejected"
+        ? health.reason instanceof Error
+          ? health.reason.message
+          : String(health.reason)
+        : undefined
   });
-  prefillEmail(input.session.user.email ?? input.stored.email);
-  setSettingsOpen(false);
-  if (frame) {
-    frame.hidden = false;
-    frame.src = nextUrl;
-    frame.focus();
-  }
-  window.setTimeout(() => setSettingsOpen(false), 50);
-  await renderPortalTargets();
+  renderDesktopShellStatus(shellStatus.status === "fulfilled" ? shellStatus.value : null);
+  renderDesktopKeepAwakeStatus(
+    keepAwakeStatus.status === "fulfilled" ? keepAwakeStatus.value : null
+  );
+  renderDesktopRecorderStoreStatus(
+    recorderStoreStatus.status === "fulfilled" ? recorderStoreStatus.value : null
+  );
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -980,20 +749,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   const healthButton = document.querySelector<HTMLButtonElement>("#open-health");
   const openPortalSettingsButton =
     document.querySelector<HTMLButtonElement>("#open-portal-settings");
-  const openLoginButton = document.querySelector<HTMLButtonElement>("#open-login");
+  const openDiagnosticsButton =
+    document.querySelector<HTMLButtonElement>("#open-diagnostics");
   const closeSettingsButton = document.querySelector<HTMLButtonElement>("#close-settings");
   const reloadPortalButton = document.querySelector<HTMLButtonElement>("#reload-portal");
-  const dashboardButton = document.querySelector<HTMLButtonElement>("#open-insforge-dashboard");
-  const authButton = document.querySelector<HTMLButtonElement>("#open-insforge-auth");
-  const ensureBucketsButton =
-    document.querySelector<HTMLButtonElement>("#ensure-insforge-buckets");
-  const refreshInsforgeButton =
-    document.querySelector<HTMLButtonElement>("#refresh-insforge");
-  const verifyInsforgeSessionButton =
-    document.querySelector<HTMLButtonElement>("#verify-insforge-session");
-  const loginForm = document.querySelector<HTMLFormElement>("#insforge-login-form");
-  const signUpButton = document.querySelector<HTMLButtonElement>("#insforge-sign-up");
-  const logoutButton = document.querySelector<HTMLButtonElement>("#insforge-logout");
+  const refreshDiagnosticsButton =
+    document.querySelector<HTMLButtonElement>("#refresh-diagnostics");
+  const openApiHealthButton = document.querySelector<HTMLButtonElement>("#open-api-health");
   const keepAwakeStartButton =
     document.querySelector<HTMLButtonElement>("#desktop-keep-awake-start");
   const keepAwakeStopButton =
@@ -1016,6 +778,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             type?: string;
             url?: string;
             fileName?: string;
+            targetFormat?: "original" | "mp3";
             sessionTitle?: string;
           })
         : null;
@@ -1028,7 +791,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       try {
         const savedPath = await downloadFileToDesktop({
           url: payload.url,
-          fileName: payload.fileName
+          fileName: payload.fileName,
+          targetFormat: payload.targetFormat
         });
 
         postPortalEvent({
@@ -1039,8 +803,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       } catch (error) {
         postPortalEvent({
           type: "mystt.desktop.download-failed",
-          message:
-            error instanceof Error ? error.message : "다운로드 폴더 저장에 실패했습니다."
+          message: formatDesktopBridgeError(
+            error,
+            "다운로드 폴더 저장에 실패했습니다."
+          )
         });
       }
     }
@@ -1049,18 +815,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   openPortalSettingsButton?.addEventListener("click", () =>
     postPortalCommand("mystt.portal.toggleSettings")
   );
-  openLoginButton?.addEventListener("click", () => {
-    if (openLoginButton.dataset.mode === "logout") {
-      clearStoredDesktopAuthState();
-      updateLoginMessage("로그아웃했습니다.");
-      renderSessionState({
-        stored: null,
-        session: null
-      });
-      return;
-    }
-
+  openDiagnosticsButton?.addEventListener("click", async () => {
     setSettingsOpen(true);
+    await refreshDesktopDiagnostics();
   });
   closeSettingsButton?.addEventListener("click", () => setSettingsOpen(false));
   overlay?.addEventListener("click", (event) => {
@@ -1070,8 +827,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   reloadPortalButton?.addEventListener("click", async () => {
-    const frame = document.querySelector<HTMLIFrameElement>("#portal-frame");
     await renderPortalTargets();
+    await refreshDesktopDiagnostics();
     if (frame && currentTarget) {
       frame.src = buildPortalUrl(currentTarget.url);
     }
@@ -1085,34 +842,13 @@ window.addEventListener("DOMContentLoaded", async () => {
     await openExternal(targets[1].url);
   });
   healthButton?.addEventListener("click", async () => {
-    await openExternal(`${targets[0].url}/health`);
+    await openExternal(`${apiBaseUrl}/health`);
   });
-
-  dashboardButton?.addEventListener("click", async () => {
-    await openExternal("https://insforge.doublejun.digital/dashboard");
+  refreshDiagnosticsButton?.addEventListener("click", async () => {
+    await refreshDesktopDiagnostics();
   });
-  authButton?.addEventListener("click", async () => {
-    await openExternal("https://insforge.doublejun.digital/dashboard/authentication");
-  });
-  ensureBucketsButton?.addEventListener("click", async () => {
-    await requestJson("/v1/insforge/storage/buckets/ensure", {
-      method: "POST"
-    });
-    await refreshInsforgePanel();
-  });
-  refreshInsforgeButton?.addEventListener("click", async () => {
-    await refreshInsforgePanel();
-  });
-  verifyInsforgeSessionButton?.addEventListener("click", async () => {
-    const resolved = await resolveDesktopSessionState();
-    renderSessionState(resolved);
-
-    if (!resolved.session) {
-      updateLoginMessage("로그인된 세션이 없습니다.");
-      return;
-    }
-
-    updateLoginMessage(`${resolved.session.user.email ?? resolved.stored?.email} 세션이 유효합니다.`);
+  openApiHealthButton?.addEventListener("click", async () => {
+    await openExternal(`${apiBaseUrl}/health`);
   });
 
   keepAwakeStartButton?.addEventListener("click", async () => {
@@ -1130,121 +866,25 @@ window.addEventListener("DOMContentLoaded", async () => {
     renderDesktopRecorderStoreStatus(status);
   });
 
-  loginForm?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const formData = new FormData(loginForm);
-    const email = String(formData.get("email") ?? "").trim();
-    const password = String(formData.get("password") ?? "").trim();
+  await Promise.all([renderPortalTargets(), refreshDesktopDiagnostics()]);
 
-    if (!email || !password) {
-      updateLoginMessage("이메일과 비밀번호를 입력해 주세요.");
-      return;
-    }
-
-    updateLoginMessage("로그인 중입니다.");
-
+  if (verificationOptions.autostartKeepAwakeOnLaunch) {
     try {
-      const session = await signInWithInsforgeDesktop({
-        email,
-        password
-      });
-
-      if (!session.accessToken) {
-        throw new Error("Access token was not returned.");
-      }
-
-      const nextState = {
-        email: session.user.email ?? email,
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken
-      };
-
-      saveStoredDesktopAuthState(nextState);
-      let currentSession: CurrentSessionRecord;
-      try {
-        currentSession = await fetchInsforgeDesktopSession(nextState.accessToken);
-      } catch {
-        currentSession = {
-          user: session.user
-        };
-      }
-      await finishAuthSuccess({
-        stored: nextState,
-        session: currentSession,
-        message: `${currentSession.user.email ?? email} 로그인 완료`
-      });
+      const status = await startDesktopKeepAwake();
+      renderDesktopKeepAwakeStatus(status);
     } catch (error) {
-      clearStoredDesktopAuthState();
-      updateLoginMessage(error instanceof Error ? error.message : "로그인에 실패했습니다.");
-      renderSessionState({
-        stored: null,
-        session: null
-      });
+      console.warn("desktop keep-awake autostart failed", error);
     }
-  });
+  }
 
-  signUpButton?.addEventListener("click", async () => {
-    if (!loginForm) {
-      return;
+  if (verificationOptions.openDiagnosticsOnLaunch) {
+    setSettingsOpen(true);
+    await refreshDesktopDiagnostics();
+
+    if (verificationOptions.diagnosticsScrollTarget) {
+      document
+        .getElementById(verificationOptions.diagnosticsScrollTarget)
+        ?.scrollIntoView({ block: "center" });
     }
-
-    const formData = new FormData(loginForm);
-    const name = String(formData.get("name") ?? "").trim();
-    const email = String(formData.get("email") ?? "").trim();
-    const password = String(formData.get("password") ?? "").trim();
-
-    if (!email || !password) {
-      updateLoginMessage("계정을 만들려면 이메일과 비밀번호를 입력해 주세요.");
-      return;
-    }
-
-    updateLoginMessage("계정을 만드는 중입니다.");
-
-    try {
-      const session = await signUpWithInsforgeDesktop({
-        email,
-        password,
-        name: name || undefined
-      });
-
-      if (!session.accessToken) {
-        throw new Error("계정은 만들어졌지만 access token이 없습니다.");
-      }
-
-      const nextState = {
-        email: session.user.email ?? email,
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken
-      };
-
-      saveStoredDesktopAuthState(nextState);
-      let currentSession: CurrentSessionRecord;
-      try {
-        currentSession = await fetchInsforgeDesktopSession(nextState.accessToken);
-      } catch {
-        currentSession = {
-          user: session.user
-        };
-      }
-      await finishAuthSuccess({
-        stored: nextState,
-        session: currentSession,
-        message: `${currentSession.user.email ?? email} 계정 생성 및 로그인 완료`
-      });
-    } catch (error) {
-      updateLoginMessage(error instanceof Error ? error.message : "계정 생성에 실패했습니다.");
-    }
-  });
-
-  logoutButton?.addEventListener("click", () => {
-    clearStoredDesktopAuthState();
-    updateLoginMessage("로그아웃했습니다.");
-    renderSessionState({
-      stored: null,
-      session: null
-    });
-  });
-
-  await renderPortalTargets();
-  await refreshInsforgePanel();
+  }
 });

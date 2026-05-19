@@ -21,7 +21,7 @@ pnpm graphify:explain -- "processSessionVerticalSlice()"
 pnpm graphify:codex
 ```
 
-If the package is not installed in the repo-local venv, the wrapper falls back to the existing shared interpreter at `/Volumes/mac_dock/github/mylaw/.venv/bin/python`. You can override that with `GRAPHIFY_PYTHON=/abs/path/to/python`.
+If the package is not installed in the repo-local venv, the wrapper falls back to the interpreter from `GRAPHIFY_PYTHON`, `graphify-out/.graphify_python`, `python3`, or `python` when that interpreter already has the `graphify` package. You can override the search order with `GRAPHIFY_PYTHON=/abs/path/to/python`.
 
 ## Observability
 

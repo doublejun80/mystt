@@ -16,7 +16,6 @@
     "@fastify/cors": "^10.0.1",
     "@fastify/multipart": "^10.0.0",
     "@mystt/audio-core": "workspace:*",
-    "@mystt/insforge-bridge": "workspace:*",
     "@mystt/notes-schema": "workspace:*",
     "@mystt/session-queue": "workspace:*",
     "@mystt/soniox-client": "workspace:*",

@@ -80,7 +80,9 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(400).send({ message: "mode is required when sessionId is unknown" });
     }
 
-    let transcriptText = body.transcript;
+    let transcriptForNotes:
+      | Parameters<typeof generateStructuredNotes>[0]["transcript"]
+      | undefined = body.transcript;
 
     if (body.transcriptionId) {
       const transcript = await getAsyncTranscript(body.transcriptionId);
@@ -99,19 +101,19 @@ export const notesRoutes: FastifyPluginAsync = async (app) => {
           rawTranscript: packageShape,
           normalizedTranscript: normalized
         });
-        transcriptText = normalized.text;
+        transcriptForNotes = normalized;
       } else {
-        transcriptText = transcript.text;
+        transcriptForNotes = transcript.text;
       }
     }
 
-    if (!transcriptText) {
+    if (!transcriptForNotes) {
       return reply.code(400).send({ message: "Transcript text could not be resolved" });
     }
 
     const notes = await generateStructuredNotes({
       mode,
-      transcript: transcriptText,
+      transcript: transcriptForNotes,
       sessionTitle: session?.title
     });
 

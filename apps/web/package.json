@@ -3,16 +3,17 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "sh -lc 'next dev -H ${WEB_HOST:-0.0.0.0} -p ${WEB_PORT:-3200}'",
-    "build": "next build",
-    "start": "sh -lc 'next start -H ${WEB_HOST:-0.0.0.0} -p ${WEB_PORT:-3200}'",
+    "dev": "sh -lc 'set -a; [ -f ../../.env ] && . ../../.env; set +a; next dev -H ${WEB_HOST:-0.0.0.0} -p ${WEB_PORT:-3203}'",
+    "build": "sh -lc 'set -a; [ -f ../../.env ] && . ../../.env; set +a; next build'",
+    "start": "sh -lc 'set -a; [ -f ../../.env ] && . ../../.env; set +a; next start -H ${WEB_HOST:-0.0.0.0} -p ${WEB_PORT:-3203}'",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@mystt/audio-core": "workspace:*",
-    "@mystt/insforge-bridge": "workspace:*",
+    "@mystt/transcript-normalizer": "workspace:*",
     "@mystt/ui-kit": "workspace:*",
     "@soniox/client": "^1.0.2",
     "next": "14.2.21",

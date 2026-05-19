@@ -10,7 +10,7 @@ package digital.doublejun.mystt.recorder
 // - original audio retention until upload + hash verification completes
 //
 // Shared JSON contract:
-// /Volumes/mac_dock/github/mystt/packages/audio-core/src/tauri-recorder.ts
+// packages/audio-core/src/tauri-recorder.ts
 
 class MysttRecorderPluginScaffold {
   fun startRecording() {

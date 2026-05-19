@@ -33,7 +33,6 @@ import {
   getPostgresPool,
   getS3StorageClient
 } from "./backends";
-import { shadowWriteInsforgeArtifact } from "./insforge";
 
 export interface StoredTranscription {
   transcriptionId: string;
@@ -48,6 +47,18 @@ export interface StoredTranscription {
   cleanupCompletedAt?: string;
   cleanupLastError?: string;
   errorMessage?: string;
+}
+
+export interface StoredSourceAudioUpload {
+  sessionId: string;
+  sha256: string;
+  byteLength: number;
+  sourceLocation: string;
+  sonioxFileId: string;
+  sonioxFileName: string;
+  uploadedAt: string;
+  contentType?: string;
+  sourceFileName?: string;
 }
 
 export interface StoredNotes {
@@ -76,6 +87,7 @@ export interface PersistedApiState {
   webhookFingerprints: string[];
   sessionByTranscriptionId: Record<string, string>;
   transcriptionBySessionId: Record<string, StoredTranscription>;
+  sourceAudioUploadsBySessionId: Record<string, StoredSourceAudioUpload[]>;
   normalizedTranscripts: Record<string, NormalizedTranscript>;
   rawTranscriptText: Record<string, string>;
   notesBySessionId: Record<string, StoredNotes>;
@@ -152,6 +164,7 @@ function createEmptyState(seedSessions: SessionRecord[]): PersistedApiState {
     webhookFingerprints: [],
     sessionByTranscriptionId: {},
     transcriptionBySessionId: {},
+    sourceAudioUploadsBySessionId: {},
     normalizedTranscripts: {},
     rawTranscriptText: {},
     notesBySessionId: {},
@@ -207,6 +220,105 @@ function loadLocalPersistedApiState(seedSessions: SessionRecord[]): PersistedApi
     ...createEmptyState(seedSessions),
     ...parsed,
     auditEvents: auditEvents.length > 0 ? auditEvents : fallbackAuditEvents
+  };
+}
+
+function mergeRecordByLocalOnlySession<T>(
+  remote: Record<string, T>,
+  local: Record<string, T>,
+  localOnlySessionIds: Set<string>
+) {
+  const merged = { ...remote };
+
+  for (const [sessionId, value] of Object.entries(local)) {
+    if (localOnlySessionIds.has(sessionId) && !(sessionId in merged)) {
+      merged[sessionId] = value;
+    }
+  }
+
+  return merged;
+}
+
+export function mergeLocalOnlyPersistedApiState(
+  remoteState: PersistedApiState,
+  localState: PersistedApiState
+): { state: PersistedApiState; localOnlySessionIds: string[] } {
+  const remoteSessionIds = new Set(remoteState.sessions.map((session) => session.id));
+  const localOnlySessions = localState.sessions.filter(
+    (session) => !remoteSessionIds.has(session.id)
+  );
+  const localOnlySessionIds = new Set(localOnlySessions.map((session) => session.id));
+  const sessionByTranscriptionId = { ...remoteState.sessionByTranscriptionId };
+
+  for (const [transcriptionId, sessionId] of Object.entries(
+    localState.sessionByTranscriptionId
+  )) {
+    if (
+      localOnlySessionIds.has(sessionId) &&
+      !(transcriptionId in sessionByTranscriptionId)
+    ) {
+      sessionByTranscriptionId[transcriptionId] = sessionId;
+    }
+  }
+
+  const auditEventsById = new Map<string, AuditEventRecord>();
+  for (const event of [...remoteState.auditEvents, ...localState.auditEvents]) {
+    auditEventsById.set(event.eventId, event);
+  }
+
+  const sessions = [...remoteState.sessions, ...localOnlySessions].sort(
+    (left, right) =>
+      new Date(right.startedAt).getTime() - new Date(left.startedAt).getTime()
+  );
+  const mergedSessionIds = new Set(sessions.map((session) => session.id));
+
+  return {
+    localOnlySessionIds: localOnlySessions.map((session) => session.id),
+    state: {
+      sessions,
+      webhookFingerprints: [
+        ...new Set([
+          ...remoteState.webhookFingerprints,
+          ...localState.webhookFingerprints
+        ])
+      ],
+      sessionByTranscriptionId,
+      transcriptionBySessionId: mergeRecordByLocalOnlySession(
+        remoteState.transcriptionBySessionId,
+        localState.transcriptionBySessionId,
+        localOnlySessionIds
+      ),
+      sourceAudioUploadsBySessionId: mergeRecordByLocalOnlySession(
+        remoteState.sourceAudioUploadsBySessionId,
+        localState.sourceAudioUploadsBySessionId,
+        localOnlySessionIds
+      ),
+      normalizedTranscripts: mergeRecordByLocalOnlySession(
+        remoteState.normalizedTranscripts,
+        localState.normalizedTranscripts,
+        localOnlySessionIds
+      ),
+      rawTranscriptText: mergeRecordByLocalOnlySession(
+        remoteState.rawTranscriptText,
+        localState.rawTranscriptText,
+        localOnlySessionIds
+      ),
+      notesBySessionId: mergeRecordByLocalOnlySession(
+        remoteState.notesBySessionId,
+        localState.notesBySessionId,
+        localOnlySessionIds
+      ),
+      providerChecks: {
+        ...localState.providerChecks,
+        ...remoteState.providerChecks
+      },
+      auditEvents: [...auditEventsById.values()]
+        .filter((event) => !event.sessionId || mergedSessionIds.has(event.sessionId))
+        .sort(
+          (left, right) =>
+            new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        )
+    }
   };
 }
 
@@ -465,12 +577,40 @@ async function ensurePostgresTranscriptionCleanupColumns(client: {
   );
 }
 
+async function ensurePostgresSourceAudioUploadLedgerTable(client: {
+  query: (sql: string, values?: unknown[]) => Promise<unknown>;
+}) {
+  await client.query(
+    `CREATE TABLE IF NOT EXISTS source_audio_uploads (
+      session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      sha256 TEXT NOT NULL,
+      byte_length BIGINT NOT NULL,
+      source_location TEXT NOT NULL,
+      soniox_file_id TEXT NOT NULL,
+      soniox_file_name TEXT NOT NULL,
+      uploaded_at TIMESTAMPTZ NOT NULL,
+      content_type TEXT,
+      source_file_name TEXT,
+      PRIMARY KEY (session_id, sha256, byte_length)
+    )`
+  );
+  await client.query(
+    `ALTER TABLE source_audio_uploads
+      ADD COLUMN IF NOT EXISTS content_type TEXT`
+  );
+  await client.query(
+    `ALTER TABLE source_audio_uploads
+      ADD COLUMN IF NOT EXISTS source_file_name TEXT`
+  );
+}
+
 async function loadPostgresPersistedApiState(seedSessions: SessionRecord[]) {
   const pool = getPostgresPool();
   const client = await pool.connect();
 
   try {
     await ensurePostgresTranscriptionCleanupColumns(client);
+    await ensurePostgresSourceAudioUploadLedgerTable(client);
 
     const sessionsResult = await client.query(
       `SELECT
@@ -513,6 +653,19 @@ async function loadPostgresPersistedApiState(seedSessions: SessionRecord[]) {
           cleanup_last_error,
           error_message
         FROM transcription_jobs`
+    );
+    const sourceAudioUploadsResult = await client.query(
+      `SELECT
+          session_id,
+          sha256,
+          byte_length,
+          source_location,
+          soniox_file_id,
+          soniox_file_name,
+          uploaded_at,
+          content_type,
+          source_file_name
+        FROM source_audio_uploads`
     );
     const providerChecksResult = await client.query(
       `SELECT provider, configured, ok, detail, checked_at
@@ -604,6 +757,24 @@ async function loadPostgresPersistedApiState(seedSessions: SessionRecord[]) {
       jobsResult.rows.map((row: any) => [row.transcription_id, row.session_id])
     );
 
+    const sourceAudioUploadsBySessionId: Record<string, StoredSourceAudioUpload[]> = {};
+    for (const row of sourceAudioUploadsResult.rows) {
+      const sessionId = row.session_id as string;
+      const uploads = sourceAudioUploadsBySessionId[sessionId] ?? [];
+      uploads.push({
+        sessionId,
+        sha256: row.sha256,
+        byteLength: Number(row.byte_length),
+        sourceLocation: row.source_location,
+        sonioxFileId: row.soniox_file_id,
+        sonioxFileName: row.soniox_file_name,
+        uploadedAt: new Date(row.uploaded_at).toISOString(),
+        contentType: row.content_type ?? undefined,
+        sourceFileName: row.source_file_name ?? undefined
+      });
+      sourceAudioUploadsBySessionId[sessionId] = uploads;
+    }
+
     const notesBySessionId = Object.fromEntries(
       notesResult.rows.map((row: any) => [
         row.session_id,
@@ -668,11 +839,12 @@ async function loadPostgresPersistedApiState(seedSessions: SessionRecord[]) {
       lastError: undefined
     });
 
-    return {
+    const remoteState = {
       sessions,
       webhookFingerprints: fingerprintResult.rows.map((row: any) => row.fingerprint as string),
       sessionByTranscriptionId,
       transcriptionBySessionId,
+      sourceAudioUploadsBySessionId,
       normalizedTranscripts,
       rawTranscriptText,
       notesBySessionId,
@@ -685,6 +857,15 @@ async function loadPostgresPersistedApiState(seedSessions: SessionRecord[]) {
         createdAt: new Date(row.created_at).toISOString()
       }))
     } satisfies PersistedApiState;
+    const localState = loadLocalPersistedApiState(seedSessions);
+    const merged = mergeLocalOnlyPersistedApiState(remoteState, localState);
+
+    if (merged.localOnlySessionIds.length > 0) {
+      await persistPostgresApiState(merged.state);
+      await persistPostgresAuditEvents(merged.state.auditEvents);
+    }
+
+    return merged.state;
   } finally {
     client.release();
   }
@@ -699,14 +880,9 @@ async function persistPostgresApiState(state: PersistedApiState) {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock($1)", [postgresStateWriteLockKey]);
     await ensurePostgresTranscriptionCleanupColumns(client);
+    await ensurePostgresSourceAudioUploadLedgerTable(client);
 
-    if (sessionIds.length === 0) {
-      await client.query("DELETE FROM webhook_fingerprints");
-      await client.query("DELETE FROM provider_checks");
-      await client.query("DELETE FROM sessions");
-    } else {
-      await client.query("DELETE FROM webhook_fingerprints");
-      await client.query("DELETE FROM provider_checks");
+    if (sessionIds.length > 0) {
       await client.query("DELETE FROM session_participants WHERE session_id = ANY($1::text[])", [
         sessionIds
       ]);
@@ -716,13 +892,15 @@ async function persistPostgresApiState(state: PersistedApiState) {
       await client.query("DELETE FROM transcription_jobs WHERE session_id = ANY($1::text[])", [
         sessionIds
       ]);
+      await client.query("DELETE FROM source_audio_uploads WHERE session_id = ANY($1::text[])", [
+        sessionIds
+      ]);
       await client.query("DELETE FROM note_artifacts WHERE session_id = ANY($1::text[])", [
         sessionIds
       ]);
       await client.query("DELETE FROM transcript_cache WHERE session_id = ANY($1::text[])", [
         sessionIds
       ]);
-      await client.query("DELETE FROM sessions WHERE NOT (id = ANY($1::text[]))", [sessionIds]);
     }
 
     for (const session of state.sessions) {
@@ -780,7 +958,10 @@ async function persistPostgresApiState(state: PersistedApiState) {
             participant_id,
             name,
             role
-          ) VALUES ($1, $2, $3, $4)`,
+          ) VALUES ($1, $2, $3, $4)
+          ON CONFLICT (session_id, participant_id) DO UPDATE SET
+            name = EXCLUDED.name,
+            role = EXCLUDED.role`,
           [session.id, participant.id, participant.name, participant.role ?? null]
         );
       }
@@ -793,7 +974,11 @@ async function persistPostgresApiState(state: PersistedApiState) {
             status,
             location,
             updated_at
-          ) VALUES ($1, $2, $3, $4, NOW())`,
+          ) VALUES ($1, $2, $3, $4, NOW())
+          ON CONFLICT (session_id, kind) DO UPDATE SET
+            status = EXCLUDED.status,
+            location = EXCLUDED.location,
+            updated_at = NOW()`,
           [session.id, artifact.kind, artifact.status, artifact.location ?? null]
         );
       }
@@ -815,7 +1000,19 @@ async function persistPostgresApiState(state: PersistedApiState) {
             cleanup_completed_at,
             cleanup_last_error,
             error_message
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13)`,
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13)
+          ON CONFLICT (transcription_id) DO UPDATE SET
+            session_id = EXCLUDED.session_id,
+            status = EXCLUDED.status,
+            filename = EXCLUDED.filename,
+            audio_url = EXCLUDED.audio_url,
+            file_id = EXCLUDED.file_id,
+            cleanup_targets = EXCLUDED.cleanup_targets,
+            cleanup_status = EXCLUDED.cleanup_status,
+            cleanup_requested_at = EXCLUDED.cleanup_requested_at,
+            cleanup_completed_at = EXCLUDED.cleanup_completed_at,
+            cleanup_last_error = EXCLUDED.cleanup_last_error,
+            error_message = EXCLUDED.error_message`,
           [
             transcription.transcriptionId,
             session.id,
@@ -834,6 +1031,40 @@ async function persistPostgresApiState(state: PersistedApiState) {
         );
       }
 
+      for (const sourceAudioUpload of state.sourceAudioUploadsBySessionId[session.id] ?? []) {
+        await client.query(
+          `INSERT INTO source_audio_uploads (
+            session_id,
+            sha256,
+            byte_length,
+            source_location,
+            soniox_file_id,
+            soniox_file_name,
+            uploaded_at,
+            content_type,
+            source_file_name
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (session_id, sha256, byte_length) DO UPDATE SET
+            source_location = EXCLUDED.source_location,
+            soniox_file_id = EXCLUDED.soniox_file_id,
+            soniox_file_name = EXCLUDED.soniox_file_name,
+            uploaded_at = EXCLUDED.uploaded_at,
+            content_type = EXCLUDED.content_type,
+            source_file_name = EXCLUDED.source_file_name`,
+          [
+            session.id,
+            sourceAudioUpload.sha256,
+            sourceAudioUpload.byteLength,
+            sourceAudioUpload.sourceLocation,
+            sourceAudioUpload.sonioxFileId,
+            sourceAudioUpload.sonioxFileName,
+            sourceAudioUpload.uploadedAt,
+            sourceAudioUpload.contentType ?? null,
+            sourceAudioUpload.sourceFileName ?? null
+          ]
+        );
+      }
+
       const notes = state.notesBySessionId[session.id];
       if (notes) {
         await client.query(
@@ -842,7 +1073,11 @@ async function persistPostgresApiState(state: PersistedApiState) {
             model,
             notes,
             created_at
-          ) VALUES ($1, $2, $3::jsonb, $4)`,
+          ) VALUES ($1, $2, $3::jsonb, $4)
+          ON CONFLICT (session_id) DO UPDATE SET
+            model = EXCLUDED.model,
+            notes = EXCLUDED.notes,
+            created_at = EXCLUDED.created_at`,
           [session.id, notes.model, JSON.stringify(notes.notes), notes.createdAt]
         );
       }
@@ -856,7 +1091,11 @@ async function persistPostgresApiState(state: PersistedApiState) {
             transcript_text,
             normalized_transcript,
             updated_at
-          ) VALUES ($1, $2, $3::jsonb, NOW())`,
+          ) VALUES ($1, $2, $3::jsonb, NOW())
+          ON CONFLICT (session_id) DO UPDATE SET
+            transcript_text = EXCLUDED.transcript_text,
+            normalized_transcript = EXCLUDED.normalized_transcript,
+            updated_at = NOW()`,
           [session.id, transcriptText, JSON.stringify(normalizedTranscript)]
         );
       }
@@ -874,7 +1113,12 @@ async function persistPostgresApiState(state: PersistedApiState) {
           ok,
           detail,
           checked_at
-        ) VALUES ($1, $2, $3, $4, $5)`,
+        ) VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (provider) DO UPDATE SET
+          configured = EXCLUDED.configured,
+          ok = EXCLUDED.ok,
+          detail = EXCLUDED.detail,
+          checked_at = EXCLUDED.checked_at`,
         [
           provider,
           check.configured,
@@ -887,7 +1131,8 @@ async function persistPostgresApiState(state: PersistedApiState) {
 
     for (const fingerprint of state.webhookFingerprints) {
       await client.query(
-        `INSERT INTO webhook_fingerprints (fingerprint) VALUES ($1)`,
+        `INSERT INTO webhook_fingerprints (fingerprint) VALUES ($1)
+        ON CONFLICT (fingerprint) DO NOTHING`,
         [fingerprint]
       );
     }
@@ -1007,8 +1252,6 @@ export async function writeSessionArtifact(params: {
   fileName: string;
   content: string | Uint8Array;
 }): Promise<string> {
-  await shadowWriteInsforgeArtifact(params);
-
   if (isMinioConfigured()) {
     try {
       return await writeRemoteSessionArtifact(params);
@@ -1194,6 +1437,37 @@ export async function deletePersistedSessionFiles(input: {
 
   rmSync(resolve(audioRoot, input.sessionId), { recursive: true, force: true });
   rmSync(resolve(artifactRoot, input.sessionId), { recursive: true, force: true });
+}
+
+export async function deletePersistedSessionState(sessionId: string) {
+  if (!isPostgresConfigured()) {
+    return;
+  }
+
+  const pool = getPostgresPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [postgresStateWriteLockKey]);
+    await client.query("DELETE FROM sessions WHERE id = $1", [sessionId]);
+    await client.query("COMMIT");
+    setPostgresStatus({
+      mode: "remote",
+      lastWriteOk: true,
+      lastError: undefined
+    });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    setPostgresStatus({
+      mode: "local-fallback",
+      lastWriteOk: false,
+      lastError: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function persistTranscriptArtifacts(input: {

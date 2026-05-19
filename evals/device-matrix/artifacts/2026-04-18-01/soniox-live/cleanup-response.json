@@ -1,0 +1,4 @@
+{
+  "status": "stale",
+  "reason": "Historical cleanup response captured before portal-safe presenter rollout. Current cleanup response should also avoid exposing internal persistence paths."
+}

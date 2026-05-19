@@ -17,6 +17,27 @@ type ArchiveChunkRecord = {
   chunk: Blob;
 };
 
+export type RecoverableLiveRecordingArchive = {
+  sessionId: string;
+  mimeType: string;
+  createdAt: string;
+  chunkCount: number;
+  lastSequence: number;
+  isComplete: boolean;
+};
+
+type ContiguousChunkSequence = {
+  orderedRecords: ArchiveChunkRecord[];
+  chunkCount: number;
+  lastSequence: number;
+};
+
+type ChunkSequenceSummary = {
+  chunkCount: number;
+  lastSequence: number;
+  isComplete: boolean;
+};
+
 function supportsIndexedDbArchive() {
   return typeof indexedDB !== "undefined";
 }
@@ -82,6 +103,81 @@ async function withDatabase<T>(fn: (database: IDBDatabase) => Promise<T>) {
   }
 }
 
+function getContiguousChunkSequence(
+  chunkRecords: ArchiveChunkRecord[]
+): ContiguousChunkSequence | null {
+  if (chunkRecords.length === 0) {
+    return null;
+  }
+
+  const orderedRecords = [...chunkRecords].sort(
+    (left, right) => left.sequence - right.sequence
+  );
+
+  for (let index = 0; index < orderedRecords.length; index += 1) {
+    const record = orderedRecords[index];
+
+    if (!record || !Number.isInteger(record.sequence) || record.sequence !== index) {
+      return null;
+    }
+  }
+
+  return {
+    orderedRecords,
+    chunkCount: orderedRecords.length,
+    lastSequence: orderedRecords.length - 1
+  };
+}
+
+function summarizeChunkSequences(sequences: number[]): ChunkSequenceSummary {
+  if (sequences.length === 0) {
+    return {
+      chunkCount: 0,
+      lastSequence: -1,
+      isComplete: false
+    };
+  }
+
+  const ordered = [...sequences].sort((left, right) => left - right);
+  const unique = new Set<number>();
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const sequence = ordered[index] ?? -1;
+    unique.add(sequence);
+
+    if (!Number.isInteger(sequence) || sequence !== index) {
+      return {
+        chunkCount: ordered.length,
+        lastSequence: ordered[ordered.length - 1] ?? -1,
+        isComplete: false
+      };
+    }
+  }
+
+  return {
+    chunkCount: ordered.length,
+    lastSequence: ordered[ordered.length - 1] ?? -1,
+    isComplete: unique.size === ordered.length
+  };
+}
+
+function getSessionIdAndSequenceFromChunkKey(key: IDBValidKey) {
+  if (!Array.isArray(key) || key.length < 2) {
+    return null;
+  }
+
+  const [sessionId, sequence] = key;
+
+  if (typeof sessionId !== "string" || typeof sequence !== "number") {
+    return null;
+  }
+
+  return {
+    sessionId,
+    sequence
+  };
+}
+
 export async function prepareLiveRecordingArchive(
   sessionId: string,
   mimeType: string
@@ -115,7 +211,7 @@ export async function appendLiveRecordingChunk(
 ) {
   return withDatabase(async (database) => {
     const transaction = database.transaction(chunkStoreName, "readwrite");
-    transaction.objectStore(chunkStoreName).put({
+    transaction.objectStore(chunkStoreName).add({
       sessionId,
       sequence,
       chunk
@@ -166,28 +262,64 @@ export async function finalizeLiveRecordingArchive(sessionId: string) {
       return null;
     }
 
-    const orderedChunks = [...chunkRecords]
-      .sort((left, right) => left.sequence - right.sequence)
-      .map((record) => record.chunk);
-    const blob = new Blob(orderedChunks, { type: sessionRecord.mimeType });
+    const chunkSequence = getContiguousChunkSequence(chunkRecords);
 
-    const cleanupTransaction = database.transaction(
-      [sessionStoreName, chunkStoreName],
-      "readwrite"
-    );
-    cleanupTransaction.objectStore(sessionStoreName).delete(sessionId);
-    const cleanupIndex = cleanupTransaction.objectStore(chunkStoreName).index("bySessionId");
-    const cleanupKeys = await requestValue(
-      cleanupIndex.getAllKeys(IDBKeyRange.only(sessionId))
-    );
-
-    for (const key of cleanupKeys) {
-      cleanupTransaction.objectStore(chunkStoreName).delete(key);
+    if (!chunkSequence) {
+      return null;
     }
 
-    await waitForTransaction(cleanupTransaction);
-
+    const orderedChunks = chunkSequence.orderedRecords.map((record) => record.chunk);
+    const blob = new Blob(orderedChunks, { type: sessionRecord.mimeType });
     return blob;
+  });
+}
+
+export async function listRecoverableLiveRecordingArchives() {
+  return withDatabase(async (database) => {
+    const transaction = database.transaction([sessionStoreName, chunkStoreName], "readonly");
+    const sessionStore = transaction.objectStore(sessionStoreName);
+    const chunkStore = transaction.objectStore(chunkStoreName);
+    const sessionRecordsRequest = sessionStore.getAll() as IDBRequest<
+      ArchiveSessionRecord[]
+    >;
+    const chunkKeysRequest = chunkStore.getAllKeys() as IDBRequest<IDBValidKey[]>;
+    const [sessionRecords, chunkRecords] = await Promise.all([
+      requestValue(sessionRecordsRequest),
+      requestValue(chunkKeysRequest)
+    ]);
+    await waitForTransaction(transaction);
+
+    const sequencesBySessionId = new Map<string, number[]>();
+
+    for (const key of chunkRecords) {
+      const parsed = getSessionIdAndSequenceFromChunkKey(key);
+
+      if (!parsed) {
+        continue;
+      }
+
+      const existing = sequencesBySessionId.get(parsed.sessionId) ?? [];
+      existing.push(parsed.sequence);
+      sequencesBySessionId.set(parsed.sessionId, existing);
+    }
+
+    return sessionRecords
+      .map((sessionRecord) => {
+        const chunkSequence = summarizeChunkSequences(
+          sequencesBySessionId.get(sessionRecord.sessionId) ?? []
+        );
+
+        return {
+          sessionId: sessionRecord.sessionId,
+          mimeType: sessionRecord.mimeType,
+          createdAt: sessionRecord.createdAt,
+          chunkCount: chunkSequence.chunkCount,
+          lastSequence: chunkSequence.lastSequence,
+          isComplete: chunkSequence.isComplete
+        } satisfies RecoverableLiveRecordingArchive;
+      })
+      .filter((session) => session.chunkCount > 0)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   });
 }
 

@@ -12,6 +12,11 @@ import {
   useAudioRecorderState
 } from "expo-audio";
 import * as FileSystem from "expo-file-system";
+import {
+  activateKeepAwakeAsync,
+  deactivateKeepAwake,
+  isAvailableAsync as isKeepAwakeAvailableAsync
+} from "expo-keep-awake";
 
 import {
   buildRecorderDomainSnapshot,
@@ -46,6 +51,7 @@ type TransportState = "idle" | "recording" | "paused" | "saving" | "saved" | "er
 const targetRecordingMinutes = 120;
 const estimatedBitRate = 64_000;
 const twoHourEstimateMb = Math.round(((estimatedBitRate / 8) * 60 * 120) / 1024 / 1024);
+const keepAwakeTag = "mystt-mobile-recording";
 
 const baseRecordingPreset =
   RecordingPresets.HIGH_QUALITY ?? RecordingPresets.LOW_QUALITY;
@@ -110,6 +116,7 @@ export interface NativeRecorderState {
   runtimeStatePath: string;
   lastKnownAppState: string;
   backgroundTransitionCount: number;
+  keepAwakeActive: boolean;
   canStart: boolean;
   canPause: boolean;
   canResume: boolean;
@@ -296,6 +303,7 @@ export function useNativeRecorder(): NativeRecorderState {
   const [pipelineState, setPipelineState] = useState<"idle" | "queueing" | "queued" | "error">(
     "idle"
   );
+  const [keepAwakeActive, setKeepAwakeActive] = useState(false);
   const activeSessionRef = useRef(activeSession);
   const transportStateRef = useRef<TransportState>(transportState);
   const phaseHistoryRef = useRef<RecorderPhase[]>(["idle"]);
@@ -303,6 +311,7 @@ export function useNativeRecorder(): NativeRecorderState {
   const evidenceLogRef = useRef<RecorderEvidenceEvent[]>([]);
   const appStateRef = useRef(AppState.currentState ?? "active");
   const backgroundTransitionCountRef = useRef(0);
+  const keepAwakeActiveRef = useRef(false);
 
   const permissionLabel =
     permission == null
@@ -321,6 +330,15 @@ export function useNativeRecorder(): NativeRecorderState {
     transportStateRef.current = transportState;
   }, [transportState]);
 
+  useEffect(
+    () => () => {
+      if (keepAwakeActiveRef.current) {
+        void deactivateKeepAwake(keepAwakeTag).catch(() => undefined);
+      }
+    },
+    []
+  );
+
   function resolveSelectedInputSelection() {
     return createInputSelection(
       availableInputs.map((input) => ({
@@ -336,6 +354,38 @@ export function useNativeRecorder(): NativeRecorderState {
     const next = [formatOperationLog(message), ...operationLogRef.current].slice(0, 32);
     operationLogRef.current = next;
     setOperationLog(next);
+  }
+
+  async function activateRecordingKeepAwake() {
+    try {
+      const available = await isKeepAwakeAvailableAsync();
+      if (!available) {
+        pushLog("이 기기에서 화면 유지 API를 사용할 수 없습니다.");
+        return;
+      }
+
+      await activateKeepAwakeAsync(keepAwakeTag);
+      keepAwakeActiveRef.current = true;
+      setKeepAwakeActive(true);
+      pushLog("녹음 중 화면 자동 잠금을 막았습니다.");
+      pushEvidence("keep_awake", "녹음 중 화면 자동 잠금을 막았습니다.");
+    } catch (keepAwakeError) {
+      pushLog("화면 유지 요청에 실패했습니다. 기기 자동 잠금 설정을 확인해 주세요.");
+      pushEvidence("keep_awake", "화면 유지 요청에 실패했습니다.", {
+        phase: phaseHistoryRef.current.at(-1) ?? "idle"
+      });
+    }
+  }
+
+  async function releaseRecordingKeepAwake() {
+    if (!keepAwakeActiveRef.current) {
+      return;
+    }
+
+    keepAwakeActiveRef.current = false;
+    setKeepAwakeActive(false);
+    await deactivateKeepAwake(keepAwakeTag).catch(() => undefined);
+    pushLog("화면 자동 잠금 방지를 해제했습니다.");
   }
 
   function pushEvidence(
@@ -586,6 +636,7 @@ export function useNativeRecorder(): NativeRecorderState {
         phase: "arming"
       });
       await configureRecordingMode();
+      await activateRecordingKeepAwake();
       const inputs = await prepareRecorder(
         recorder,
         selectedInputUid,
@@ -630,6 +681,7 @@ export function useNativeRecorder(): NativeRecorderState {
         backgroundTransitionCount: 0
       });
     } catch (startError) {
+      await releaseRecordingKeepAwake();
       setTransportState("error");
       transportStateRef.current = "error";
       setError(startError instanceof Error ? startError.message : "녹음을 시작하지 못했습니다.");
@@ -736,8 +788,10 @@ export function useNativeRecorder(): NativeRecorderState {
       await clearRecorderRuntimeState();
       setRecoverySnapshot(null);
       await relaxAudioMode();
+      await releaseRecordingKeepAwake();
       await refreshInputs();
     } catch (saveError) {
+      await releaseRecordingKeepAwake();
       setTransportState("error");
       transportStateRef.current = "error";
       transitionPhase("failed");
@@ -771,6 +825,7 @@ export function useNativeRecorder(): NativeRecorderState {
       await clearRecorderRuntimeState();
       setRecoverySnapshot(null);
       await relaxAudioMode();
+      await releaseRecordingKeepAwake();
       setTransportState("idle");
       transportStateRef.current = "idle";
       setPipelineState("idle");
@@ -823,6 +878,20 @@ export function useNativeRecorder(): NativeRecorderState {
         fileUri: targetEntry.session.localAudioPath,
         fileName
       });
+      if (
+        typeof targetEntry.sizeBytes === "number" &&
+        upload.byteLength !== targetEntry.sizeBytes
+      ) {
+        throw new Error(
+          `업로드 크기 검증 실패: local=${targetEntry.sizeBytes}, remote=${upload.byteLength}`
+        );
+      }
+      if (!targetEntry.localSha256) {
+        throw new Error("로컬 SHA-256 계산이 없어 업로드 검증을 완료할 수 없습니다.");
+      }
+      if (upload.sha256 !== targetEntry.localSha256) {
+        throw new Error("업로드 SHA-256 검증 실패");
+      }
 
       await enqueueSessionFromFileId({
         sessionId: serverSession.id,
@@ -835,6 +904,10 @@ export function useNativeRecorder(): NativeRecorderState {
           uploadState: "queued",
           remoteSessionId: serverSession.id,
           remoteFileId: upload.fileId,
+          localSha256: targetEntry.localSha256,
+          remoteSha256: upload.sha256,
+          remoteByteLength: upload.byteLength,
+          uploadVerifiedAt: new Date().toISOString(),
           uploadQueuedAt: new Date().toISOString()
         }
       });
@@ -908,6 +981,7 @@ export function useNativeRecorder(): NativeRecorderState {
     runtimeStatePath: getRecorderRuntimeStatePath(),
     lastKnownAppState: runtimeSummarySource.lastKnownAppState,
     backgroundTransitionCount: runtimeSummarySource.backgroundTransitionCount,
+    keepAwakeActive,
     canStart: transportState === "idle" || transportState === "saved",
     canPause: transportState === "recording",
     canResume: transportState === "paused",

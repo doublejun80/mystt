@@ -102,7 +102,7 @@ services:
     volumes:
       - ../../:/workspace
     ports:
-      - "${WEB_PORT:-3200}:3000"
+      - "${WEB_PORT:-3203}:3203"
     depends_on:
       - api
 

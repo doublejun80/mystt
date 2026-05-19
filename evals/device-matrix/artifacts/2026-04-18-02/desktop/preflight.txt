@@ -1,0 +1,11 @@
+
+> mystt@ desktop:preflight /Volumes/mac_dock/github/mystt
+> node scripts/desktop-tauri-preflight.mjs
+
+[mystt desktop] preflight
+- OK API /health: reachable
+- OK Local portal: reachable
+- WARN Tauri Vite dev shell: fetch failed
+  next: pnpm --filter @mystt/desktop tauri dev
+- WARN Docker daemon: Cannot connect to the Docker daemon at unix:///Users/doublejun/.orbstack/run/docker.sock. Is the docker daemon running?
+[mystt desktop] local API and portal are ready. next: pnpm --filter @mystt/desktop tauri dev

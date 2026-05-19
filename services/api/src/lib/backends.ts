@@ -15,9 +15,14 @@ export function getPostgresPool(): Pool {
     throw new Error("POSTGRES_URL is not configured.");
   }
 
-  postgresPool ??= new Pool({
-    connectionString: apiConfig.POSTGRES_URL
-  });
+  if (!postgresPool) {
+    postgresPool = new Pool({
+      connectionString: apiConfig.POSTGRES_URL
+    });
+    postgresPool.on("error", (error) => {
+      console.warn("Postgres idle connection error; pool will reconnect on demand.", error);
+    });
+  }
 
   return postgresPool;
 }

@@ -1,7 +1,13 @@
+import { redirect } from "next/navigation";
+
 import { SessionHarness } from "../components/session-harness";
 import { fetchApiHealth, fetchPortalSessions } from "../lib/api";
 import { decorateSessionRecord } from "../lib/demo-data";
 import { filterVisiblePortalSessions } from "../lib/session-visibility";
+
+function isAuthError(error: unknown) {
+  return error instanceof Error && /authentication required|access token required/i.test(error.message);
+}
 
 export default async function PortalHomePage({
   searchParams
@@ -33,6 +39,10 @@ export default async function PortalHomePage({
       />
     );
   } catch (error) {
+    if (isAuthError(error)) {
+      redirect("/login?next=/");
+    }
+
     return (
       <SessionHarness
         isDesktopShell={isDesktopShell}

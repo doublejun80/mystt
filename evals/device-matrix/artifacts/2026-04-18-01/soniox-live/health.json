@@ -1,0 +1,4 @@
+{
+  "status": "stale",
+  "reason": "Historical /health capture from before InsForge removal. Current /health contract is persistence + queue only."
+}

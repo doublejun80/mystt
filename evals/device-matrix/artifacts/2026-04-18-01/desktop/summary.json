@@ -1,0 +1,23 @@
+{
+  "lane": "desktop",
+  "automated": {
+    "smokePassed": true,
+    "typecheckPassed": true,
+    "buildPassed": true,
+    "cargoTestsPassed": true
+  },
+  "capturedFields": {
+    "recorderRoot": "verified by Rust recorder_store tests only; no live appDataDir capture in this run",
+    "recordingsRoot": "verified by Rust recorder_store tests only; no live UI capture in this run",
+    "appDataDir": null,
+    "savedSessionCount": "cargo test covered empty/new store and persisted session entry",
+    "recentSessions": "cargo test covered persisted session entry ordering"
+  },
+  "missingManualEvidence": [
+    "live macOS Tauri window screenshot",
+    "visible portal target URL/host capture",
+    "keep-awake active state capture",
+    "live appDataDir/recorderRoot/runtime-state.json values from running shell"
+  ],
+  "status": "blocked"
+}

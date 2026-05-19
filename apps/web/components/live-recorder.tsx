@@ -8,7 +8,6 @@ import {
   RealtimeUtteranceBuffer,
   type RealtimeResult,
   type RealtimeToken,
-  type SegmentGroupKey,
   type SttSessionConfig,
   SonioxClient,
   segmentRealtimeTokens
@@ -16,9 +15,10 @@ import {
 
 import {
   createPortalSession,
-  deletePortalSession,
+  failPortalSession,
   getSessionSourceAudioHref,
   getSessionSourceAudioPreviewHref,
+  type MeetingNotesV2Record,
   type SessionNotesRecord,
   probeSonioxTempKey,
   previewSessionNotes,
@@ -28,11 +28,26 @@ import { resolveDesktopDownloadUrl } from "../lib/desktop-download";
 import { finalizePortalRecording } from "../lib/finalize-portal-recording";
 import { formatDurationClock } from "../lib/format";
 import {
+  buildPreferredRecordingUpload,
+  buildDesktopDownloadFileName,
+  buildRecordingFileName,
+  shouldArchivePcmWavForUpload,
+  shouldUseInlineAudioPreview
+} from "../lib/recording-audio";
+import { encodePcmWavBlobToMp3 } from "../lib/mp3-encoder";
+import {
+  cleanUserFacingText,
+  splitUserFacingStoryParagraphs,
+  splitUserFacingParagraphs
+} from "../lib/user-facing-text";
+import {
   appendLiveRecordingChunk,
   discardLiveRecordingArchive,
   finalizeLiveRecordingArchive,
+  listRecoverableLiveRecordingArchives,
   prepareLiveRecordingArchive,
-  setLiveRecordingArchiveMimeType
+  setLiveRecordingArchiveMimeType,
+  type RecoverableLiveRecordingArchive
 } from "../lib/live-recording-archive";
 import {
   PcmMicrophoneSource,
@@ -42,6 +57,30 @@ import {
   defaultRecorderPreferences,
   type RecorderPreferences
 } from "../lib/recorder-settings";
+import {
+  canUseTranscriptForPreview,
+  buildModeAdjustedRecorderPreferences,
+  buildRecoverableArchiveStatusText,
+  buildSegmentTranslationText,
+  getRetiredAudioObjectUrls,
+  getTranscriptGroupBy,
+  getUniqueAudioObjectUrls,
+  normalizeRealtimeTokenText,
+  shouldAllowRecoverableArchiveUpload,
+  shouldPersistStoppedRecording,
+  splitRealtimeTokens,
+  type AudioObjectUrlState
+} from "../lib/live-recorder-behavior";
+import {
+  buildIOSFocusShortcutUrl,
+  buildIOSShortcutReturnUrl,
+  canRunIOSFocusShortcutAction,
+  getIOSFocusShortcutBrowserSupport,
+  iosFocusStartShortcutName,
+  iosFocusStopShortcutName,
+  isLikelyIOSDevice,
+  type IOSFocusShortcutBrowserSupport
+} from "../lib/ios-focus-shortcuts";
 
 type RecorderPhase =
   | "idle"
@@ -58,6 +97,7 @@ type WorkspaceView = "live" | "summary" | "transcript";
 type TranscriptLine = {
   id: string;
   text: string;
+  translationText?: string | null;
   speaker?: string | null;
   language?: string | null;
   tokens: RealtimeToken[];
@@ -76,6 +116,31 @@ type SummaryPreviewState = {
   notes: SessionNotesRecord;
 };
 
+function isMeetingNotesV2(notes: SessionNotesRecord): notes is MeetingNotesV2Record {
+  return (
+    notes.mode === "meeting" &&
+    "schemaVersion" in notes &&
+    notes.schemaVersion === "meeting_notes_v2"
+  );
+}
+
+function getMeetingTopicTimeline(notes: MeetingNotesV2Record) {
+  return (
+    notes.topicTimeline?.map((item) => ({
+      id: item.timelineId,
+      title: cleanUserFacingText(item.title),
+      discussion: cleanUserFacingText(item.discussion),
+      outcome: cleanUserFacingText(item.outcome)
+    })) ??
+    notes.topicSummaries.map((topic) => ({
+      id: topic.topicId,
+      title: cleanUserFacingText(topic.title),
+      discussion: cleanUserFacingText(topic.summaryBullets.join(" ")),
+      outcome: null
+    }))
+  );
+}
+
 type ModeUiProfile = {
   titlePlaceholder: string;
   projectPlaceholder: string;
@@ -90,7 +155,6 @@ type ModeUiProfile = {
   transcriptTabLabel: string;
   transcriptHeaderLabel: string;
   transcriptCopy: string;
-  featureBadges: string[];
 };
 
 type BrowserSpeechRecognitionEvent = {
@@ -121,7 +185,9 @@ type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 const sessionModes: SessionMode[] = ["meeting", "speech", "interview"];
 const realtimeModel = "stt-rt-v4";
 const openAIFallbackFlushMs = 2800;
+const openAIFallbackCommandFlushTimeoutMs = 1200;
 const archiveRecorderFlushMs = 4000;
+const iosFocusShortcutStorageKey = "mystt.iosFocusShortcuts.enabled";
 
 const modeUiProfiles: Record<SessionMode, ModeUiProfile> = {
   meeting: {
@@ -137,8 +203,7 @@ const modeUiProfiles: Record<SessionMode, ModeUiProfile> = {
     summaryActionLabel: "회의 요약",
     transcriptTabLabel: "대화 수정",
     transcriptHeaderLabel: "대화 수정",
-    transcriptCopy: "회의 원문을 바로 고치고, 수정본 기준으로 회의 요약을 다시 만들 수 있습니다.",
-    featureBadges: ["화자 자동 분리", "결정·할 일 중심", "빠른 문장 확정"]
+    transcriptCopy: "회의 원문을 바로 고치고, 수정본 기준으로 회의 요약을 다시 만들 수 있습니다."
   },
   speech: {
     titlePlaceholder: "예: 분기 타운홀 발표",
@@ -153,8 +218,7 @@ const modeUiProfiles: Record<SessionMode, ModeUiProfile> = {
     summaryActionLabel: "발표 정리",
     transcriptTabLabel: "발표 원문",
     transcriptHeaderLabel: "발표 원문",
-    transcriptCopy: "발표 원문을 다듬은 뒤 핵심 메시지와 인용 문장을 다시 정리할 수 있습니다.",
-    featureBadges: ["한 명 발표 흐름", "긴 멈춤 보정", "핵심 메시지 추출"]
+    transcriptCopy: "발표 원문을 다듬은 뒤 핵심 메시지와 인용 문장을 다시 정리할 수 있습니다."
   },
   interview: {
     titlePlaceholder: "예: 사용자 인터뷰 07",
@@ -169,15 +233,14 @@ const modeUiProfiles: Record<SessionMode, ModeUiProfile> = {
     summaryActionLabel: "인터뷰 정리",
     transcriptTabLabel: "질문·답변 수정",
     transcriptHeaderLabel: "질문·답변 수정",
-    transcriptCopy: "질문과 답변 문장을 바로 고친 뒤 인터뷰 정리를 다시 만들 수 있습니다.",
-    featureBadges: ["질문·답변 분리", "후속 질문 정리", "용어 확인 강조"]
+    transcriptCopy: "질문과 답변 문장을 바로 고친 뒤 인터뷰 정리를 다시 만들 수 있습니다."
   }
 };
 
 function getPortalProcessingMessage(status: SessionStatus) {
   switch (status) {
     case "transcribing":
-      return "원본 음성은 저장했고 Soniox async 최종 전사를 만드는 중입니다.";
+      return "원본 음성은 저장했고 Soniox async 최종 전사를 만드는 중입니다. 긴 녹음은 수분 단위로 걸릴 수 있고 완료되면 최근 기록이 자동 갱신됩니다.";
     case "summarizing":
       return "원본 음성은 저장했고 최종 전사 기준으로 요약 노트를 만드는 중입니다.";
     case "emailing":
@@ -287,12 +350,6 @@ function getSpeechRecognitionConstructor() {
   );
 }
 
-function getSegmentGroupBy(
-  preferences: RecorderPreferences
-): SegmentGroupKey[] {
-  return preferences.enableSpeakerDiarization ? ["speaker", "language"] : ["language"];
-}
-
 function buildTranscriptText(lines: TranscriptLine[]) {
   return lines
     .map((item) => item.text)
@@ -361,28 +418,49 @@ function canPreviewAudioMimeType(mimeType: string) {
   return audio.canPlayType(mimeType).replace("no", "").trim().length > 0;
 }
 
-function getAudioFileExtension(mimeType: string) {
-  if (/wav/i.test(mimeType)) {
-    return "wav";
+function resolveBrowserAudioDurationMs(blob: Blob) {
+  if (typeof document === "undefined" || typeof URL === "undefined") {
+    return Promise.resolve<number | null>(null);
   }
 
-  if (/mp4|aac|m4a/i.test(mimeType)) {
-    return "m4a";
-  }
+  return new Promise<number | null>((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const audio = document.createElement("audio");
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, 2_000);
 
-  if (/mpeg|mp3/i.test(mimeType)) {
-    return "mp3";
-  }
+    function cleanup() {
+      window.clearTimeout(timeout);
+      audio.removeAttribute("src");
+      audio.load();
+      URL.revokeObjectURL(url);
+    }
 
-  if (/ogg/i.test(mimeType)) {
-    return "ogg";
-  }
-
-  if (/webm/i.test(mimeType)) {
-    return "webm";
-  }
-
-  return "audio";
+    audio.preload = "metadata";
+    audio.addEventListener(
+      "loadedmetadata",
+      () => {
+        const durationMs =
+          Number.isFinite(audio.duration) && audio.duration > 0
+            ? audio.duration * 1000
+            : null;
+        cleanup();
+        resolve(durationMs);
+      },
+      { once: true }
+    );
+    audio.addEventListener(
+      "error",
+      () => {
+        cleanup();
+        resolve(null);
+      },
+      { once: true }
+    );
+    audio.src = url;
+  });
 }
 
 async function getMicrophonePermissionState() {
@@ -416,40 +494,14 @@ async function getMicrophonePermissionState() {
   }
 }
 
-function normalizeTokens(tokens: RealtimeToken[]) {
-  return tokens
-    .map((token) => token.text)
-    .join("")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function selectDisplayTokens(
-  tokens: RealtimeToken[],
-  preferences: RecorderPreferences
-) {
-  if (!preferences.enableLiveTranslation) {
-    return tokens.filter((token) => token.translation_status !== "translation");
-  }
-
-  const translated = tokens.filter(
-    (token) => token.translation_status === "translation"
-  );
-
-  if (translated.length > 0) {
-    return translated;
-  }
-
-  return tokens.filter((token) => token.translation_status !== "translation");
-}
-
 function toTranscriptLine(
   tokens: RealtimeToken[],
   kind: TranscriptLine["kind"],
   idSuffix: string,
-  source: CaptionSource
+  source: CaptionSource,
+  translationText?: string | null
 ): TranscriptLine | null {
-  const text = normalizeTokens(tokens);
+  const text = normalizeRealtimeTokenText(tokens);
 
   if (!text) {
     return null;
@@ -458,6 +510,7 @@ function toTranscriptLine(
   return {
     id: `${idSuffix}-${Math.random().toString(36).slice(2, 9)}`,
     text,
+    translationText: translationText?.trim() || null,
     speaker: tokens[0]?.speaker ?? null,
     language: tokens[0]?.language ?? null,
     tokens,
@@ -586,47 +639,26 @@ function buildContextTerms(
   )];
 }
 
-function buildModeAdjustedPreferences(
-  preferences: RecorderPreferences,
-  mode: SessionMode
-): RecorderPreferences {
-  switch (mode) {
-    case "meeting":
-      return {
-        ...preferences,
-        enableSpeakerDiarization: true,
-        endpointDelayMs:
-          preferences.endpointDelayMs === defaultRecorderPreferences.endpointDelayMs
-            ? 1200
-            : preferences.endpointDelayMs
-      };
-    case "speech":
-      return {
-        ...preferences,
-        enableSpeakerDiarization: false,
-        endpointDelayMs:
-          preferences.endpointDelayMs === defaultRecorderPreferences.endpointDelayMs
-            ? 2200
-            : preferences.endpointDelayMs
-      };
-    case "interview":
-      return {
-        ...preferences,
-        enableSpeakerDiarization: true,
-        highlightLowConfidence: true,
-        endpointDelayMs:
-          preferences.endpointDelayMs === defaultRecorderPreferences.endpointDelayMs
-            ? 1800
-            : preferences.endpointDelayMs
-      };
-  }
-}
-
 function isTauriShell() {
   return (
     typeof window !== "undefined" &&
     ("__TAURI_INTERNALS__" in window ||
       new URLSearchParams(window.location.search).get("desktop_shell") === "1")
+  );
+}
+
+function shouldPreferStableBrowserAudioBlob() {
+  if (typeof navigator === "undefined") {
+    return false;
+  }
+
+  const userAgent = navigator.userAgent;
+  const platform = navigator.platform;
+
+  return (
+    /Android|Mobile|Whale|CriOS|FxiOS|EdgiOS|iPad|iPhone|iPod/i.test(userAgent) ||
+    (platform === "MacIntel" && navigator.maxTouchPoints > 1) ||
+    navigator.maxTouchPoints > 1
   );
 }
 
@@ -697,9 +729,12 @@ export function LiveRecorder({
   const [audioDownloadUrl, setAudioDownloadUrl] = useState<string | null>(null);
   const [audioDownloadName, setAudioDownloadName] = useState("mystt-recording.audio");
   const [audioPreviewNote, setAudioPreviewNote] = useState<string | null>(null);
+  const [screenAwakeStatus, setScreenAwakeStatus] = useState<
+    "idle" | "active" | "unsupported" | "released" | "error"
+  >("idle");
   const [desktopDownloadsDir, setDesktopDownloadsDir] = useState<string | null>(null);
   const [lastSavedSessionId, setLastSavedSessionId] = useState<string | null>(null);
-  const [supportsLiveCaption, setSupportsLiveCaption] = useState<boolean | null>(null);
+  const [, setSupportsLiveCaption] = useState<boolean | null>(null);
   const [supportsBrowserFallback, setSupportsBrowserFallback] = useState<boolean | null>(null);
   const [secureContextState, setSecureContextState] = useState<"secure" | "insecure" | "unknown">(
     "unknown"
@@ -724,6 +759,17 @@ export function LiveRecorder({
   const [summaryPending, setSummaryPending] = useState(false);
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("live");
   const [editedTranscript, setEditedTranscript] = useState("");
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [isIOSFocusShortcutEnabled, setIsIOSFocusShortcutEnabled] = useState(false);
+  const [isLikelyIOSFocusDevice, setIsLikelyIOSFocusDevice] = useState(false);
+  const [iosFocusShortcutSupport, setIOSFocusShortcutSupport] =
+    useState<IOSFocusShortcutBrowserSupport | null>(null);
+  const [recoverableArchives, setRecoverableArchives] = useState<
+    RecoverableLiveRecordingArchive[]
+  >([]);
+  const [recoveringArchiveSessionId, setRecoveringArchiveSessionId] = useState<
+    string | null
+  >(null);
 
   const recordingRef = useRef<ReturnType<SonioxClient["realtime"]["record"]> | null>(
     null
@@ -745,10 +791,12 @@ export function LiveRecorder({
   const archiveBlobResolveRef = useRef<((blob: Blob | null) => void) | null>(null);
   const archiveMimeTypeRef = useRef("");
   const archiveSessionIdRef = useRef<string | null>(null);
+  const finalizedArchiveSessionIdRef = useRef<string | null>(null);
   const archiveSequenceRef = useRef(0);
   const archiveWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const archiveModeRef = useRef<"indexeddb" | "memory">("memory");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const startedAtRef = useRef<number | null>(null);
   const runIdRef = useRef(0);
   const tokenCountRef = useRef(0);
@@ -762,9 +810,13 @@ export function LiveRecorder({
   const committedLineKeysRef = useRef(new Set<string>());
   const manualInputSelectionRef = useRef(false);
   const selectedInputDeviceIdRef = useRef("");
+  const audioObjectUrlsRef = useRef<AudioObjectUrlState>({
+    audioUrl: null,
+    audioDownloadUrl: null
+  });
 
   const activeModeProfile = modeUiProfiles[mode];
-  const effectivePreferences = buildModeAdjustedPreferences(preferences, mode);
+  const effectivePreferences = buildModeAdjustedRecorderPreferences(preferences, mode);
   const isEmbeddedDesktopShell =
     isTauriShell() && typeof window !== "undefined" && window.parent !== window;
 
@@ -773,6 +825,40 @@ export function LiveRecorder({
   tokenCountRef.current = tokenCount;
   selectedInputDeviceIdRef.current = selectedInputDeviceId;
 
+  async function requestScreenWakeLock() {
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) {
+      setScreenAwakeStatus("unsupported");
+      return;
+    }
+
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request("screen");
+      setScreenAwakeStatus("active");
+      wakeLockRef.current.addEventListener("release", () => {
+        if (wakeLockRef.current?.released) {
+          wakeLockRef.current = null;
+          setScreenAwakeStatus("released");
+        }
+      });
+    } catch {
+      wakeLockRef.current = null;
+      setScreenAwakeStatus("error");
+    }
+  }
+
+  async function releaseScreenWakeLock() {
+    const wakeLock = wakeLockRef.current;
+    wakeLockRef.current = null;
+
+    if (!wakeLock || wakeLock.released) {
+      setScreenAwakeStatus("idle");
+      return;
+    }
+
+    await wakeLock.release().catch(() => undefined);
+    setScreenAwakeStatus("idle");
+  }
+
   useEffect(() => {
     if (phase === "idle") {
       setMessage(activeModeProfile.idleMessage);
@@ -780,9 +866,56 @@ export function LiveRecorder({
   }, [activeModeProfile.idleMessage, phase]);
 
   useEffect(() => {
+    function handleVisibilityChange() {
+      if (
+        document.visibilityState === "visible" &&
+        phase === "recording" &&
+        !wakeLockRef.current
+      ) {
+        void requestScreenWakeLock();
+      }
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [phase]);
+
+  useEffect(
+    () => () => {
+      void releaseScreenWakeLock();
+    },
+    []
+  );
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return undefined;
     }
+
+    setShowDiagnostics(new URLSearchParams(window.location.search).get("debug") === "1");
+
+    const isiOSDevice = isLikelyIOSDevice(
+      window.navigator.userAgent,
+      window.navigator.platform,
+      window.navigator.maxTouchPoints
+    );
+    const focusShortcutSupport = isiOSDevice
+      ? getIOSFocusShortcutBrowserSupport(window.navigator.userAgent)
+      : null;
+    setIsLikelyIOSFocusDevice(isiOSDevice);
+    setIOSFocusShortcutSupport(focusShortcutSupport);
+
+    const storedFocusShortcutSetting = window.localStorage.getItem(
+      iosFocusShortcutStorageKey
+    );
+    setIsIOSFocusShortcutEnabled(
+      Boolean(
+        focusShortcutSupport?.canUseFocusShortcutRoundTrip &&
+          storedFocusShortcutSetting === "1"
+      )
+    );
 
     const handleDesktopMessage = (event: MessageEvent) => {
       const payload =
@@ -800,6 +933,53 @@ export function LiveRecorder({
 
     window.addEventListener("message", handleDesktopMessage);
     return () => window.removeEventListener("message", handleDesktopMessage);
+  }, []);
+
+  useEffect(() => {
+    void refreshRecoverableArchives();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      iosFocusShortcutStorageKey,
+      isIOSFocusShortcutEnabled ? "1" : "0"
+    );
+  }, [isIOSFocusShortcutEnabled]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || window.parent === window) {
+      return undefined;
+    }
+
+    const handleDesktopDownloadMessage = (event: MessageEvent) => {
+      const payload =
+        event.data && typeof event.data === "object"
+          ? (event.data as {
+              type?: string;
+              path?: string;
+              message?: string;
+            })
+          : null;
+
+      if (payload?.type === "mystt.desktop.download-complete") {
+        setMessage(
+          payload.path
+            ? `방금 녹음한 파일을 ${payload.path} 에 저장했습니다.`
+            : "방금 녹음한 파일을 앱 다운로드 폴더에 저장했습니다."
+        );
+      }
+
+      if (payload?.type === "mystt.desktop.download-failed") {
+        setMessage(payload.message ?? "앱 다운로드 폴더 저장에 실패했습니다.");
+      }
+    };
+
+    window.addEventListener("message", handleDesktopDownloadMessage);
+    return () => window.removeEventListener("message", handleDesktopDownloadMessage);
   }, []);
 
   async function refreshAudioInputDevices() {
@@ -836,6 +1016,19 @@ export function LiveRecorder({
       }
     } catch {
       // Ignore device enumeration failures and keep the current device state.
+    }
+  }
+
+  async function refreshRecoverableArchives() {
+    try {
+      const archives = await listRecoverableLiveRecordingArchives();
+      setRecoverableArchives(archives ?? []);
+    } catch (error) {
+      setLastRealtimeError(
+        error instanceof Error
+          ? `로컬 복구 목록 확인 실패: ${error.message}`
+          : "로컬 복구 목록 확인에 실패했습니다."
+      );
     }
   }
 
@@ -888,29 +1081,47 @@ export function LiveRecorder({
 
   useEffect(() => {
     return () => {
+      for (const url of getUniqueAudioObjectUrls(audioObjectUrlsRef.current)) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const nextAudioObjectUrls = {
+      audioUrl,
+      audioDownloadUrl
+    };
+
+    for (const url of getRetiredAudioObjectUrls(
+      audioObjectUrlsRef.current,
+      nextAudioObjectUrls
+    )) {
+      URL.revokeObjectURL(url);
+    }
+
+    audioObjectUrlsRef.current = nextAudioObjectUrls;
+  }, [audioDownloadUrl, audioUrl]);
+
+  useEffect(() => {
+    return () => {
       runIdRef.current += 1;
       recordingRef.current?.cancel();
       pcmSourceRef.current?.stop();
-      void discardArchiveRecorder();
+      void preserveArchiveRecorderForRecovery();
       recognitionRef.current?.abort();
 
       if (browserFallbackTimerRef.current) {
         window.clearTimeout(browserFallbackTimerRef.current);
+        browserFallbackTimerRef.current = null;
       }
 
       if (openAIFallbackTimerRef.current) {
         window.clearInterval(openAIFallbackTimerRef.current);
-      }
-
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-
-      if (audioDownloadUrl && audioDownloadUrl !== audioUrl) {
-        URL.revokeObjectURL(audioDownloadUrl);
+        openAIFallbackTimerRef.current = null;
       }
     };
-  }, [audioDownloadUrl, audioUrl]);
+  }, []);
 
   function resetArchiveRecorderState() {
     archiveRecorderRef.current = null;
@@ -931,6 +1142,7 @@ export function LiveRecorder({
     }
 
     resetArchiveRecorderState();
+    finalizedArchiveSessionIdRef.current = null;
 
     const mimeType = getPreferredArchiveMimeType();
     const recorder = mimeType
@@ -1048,9 +1260,16 @@ export function LiveRecorder({
       const indexedDbBlob = await finalizeLiveRecordingArchive(archiveSessionId);
 
       if (indexedDbBlob) {
+        finalizedArchiveSessionIdRef.current = archiveSessionId;
         resetArchiveRecorderState();
         return indexedDbBlob;
       }
+
+      setLastRealtimeError(
+        "로컬 오디오 보존 청크가 불완전해 잘린 메모리 조각 업로드를 막았습니다."
+      );
+      resetArchiveRecorderState();
+      return null;
     }
 
     resetArchiveRecorderState();
@@ -1073,6 +1292,32 @@ export function LiveRecorder({
     }
 
     resetArchiveRecorderState();
+  }
+
+  async function preserveArchiveRecorderForRecovery() {
+    try {
+      const recorder = archiveRecorderRef.current;
+      const stopped = archiveBlobPromiseRef.current;
+
+      if (recorder && recorder.state !== "inactive") {
+        try {
+          recorder.requestData();
+        } catch {
+          // Ignore best-effort data flush failures while leaving IndexedDB chunks intact.
+        }
+
+        try {
+          recorder.stop();
+        } catch {
+          // Ignore stop failures during page teardown; recovery will use written chunks.
+        }
+      }
+
+      await stopped?.catch(() => null);
+      await archiveWriteQueueRef.current.catch(() => undefined);
+    } finally {
+      resetArchiveRecorderState();
+    }
   }
 
   function setCommittedLines(nextLines: TranscriptLine[]) {
@@ -1117,13 +1362,18 @@ export function LiveRecorder({
   }
 
   function resetUtteranceBuffer() {
+    const groupBy = getTranscriptGroupBy(sessionPreferencesRef.current);
+
     utteranceBufferRef.current = new RealtimeUtteranceBuffer({
-      group_by: getSegmentGroupBy(sessionPreferencesRef.current),
+      ...(groupBy.length > 0 ? { group_by: groupBy } : {}),
       final_only: true
     });
   }
 
-  function appendStableSegments(segments: Array<{ tokens: RealtimeToken[] }>) {
+  function appendStableSegments(
+    segments: Array<{ tokens: RealtimeToken[] }>,
+    translatedTokens: RealtimeToken[]
+  ) {
     if (segments.length === 0) {
       return;
     }
@@ -1135,7 +1385,10 @@ export function LiveRecorder({
             segment.tokens,
             "committed",
             `stable-${Date.now()}-${index}`,
-            "soniox"
+            "soniox",
+            sessionPreferencesRef.current.enableLiveTranslation
+              ? buildSegmentTranslationText(segment.tokens, translatedTokens)
+              : null
           )
         )
         .filter((line): line is TranscriptLine => Boolean(line))
@@ -1241,11 +1494,15 @@ export function LiveRecorder({
     setBrowserLiveLine(null);
   }
 
-  function stopOpenAIFallback() {
+  function clearOpenAIFallbackTimer() {
     if (openAIFallbackTimerRef.current) {
       window.clearInterval(openAIFallbackTimerRef.current);
       openAIFallbackTimerRef.current = null;
     }
+  }
+
+  function stopOpenAIFallback() {
+    clearOpenAIFallbackTimer();
 
     pcmSourceRef.current?.clearPending();
     openAIFallbackInFlightRef.current = false;
@@ -1337,11 +1594,32 @@ export function LiveRecorder({
     }
   }
 
+  async function flushOpenAIFallbackForCommand(
+    runId: number,
+    liveSessionId: string,
+    timeoutMs = openAIFallbackCommandFlushTimeoutMs
+  ) {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    try {
+      await Promise.race([
+        flushOpenAIFallback(runId, liveSessionId, true),
+        new Promise<void>((resolve) => {
+          timeoutId = setTimeout(resolve, timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    }
+  }
+
   function handleRealtimeResult(result: RealtimeResult) {
     const appliedPreferences = sessionPreferencesRef.current;
-    const visibleTokens = selectDisplayTokens(result.tokens, appliedPreferences);
+    const { sourceTokens, translatedTokens } = splitRealtimeTokens(result.tokens);
 
-    if (visibleTokens.length === 0) {
+    if (sourceTokens.length === 0) {
       return;
     }
 
@@ -1350,15 +1628,17 @@ export function LiveRecorder({
 
     const groupedResult: RealtimeResult = {
       ...result,
-      tokens: visibleTokens
+      tokens: sourceTokens
     };
     const stableSegments = utteranceBufferRef.current.addResult(groupedResult);
-    appendStableSegments(stableSegments);
+    appendStableSegments(stableSegments, translatedTokens);
+
+    const groupBy = getTranscriptGroupBy(appliedPreferences);
 
     const activeSegments = segmentRealtimeTokens(
-      visibleTokens.filter((token) => !token.is_final),
+      sourceTokens.filter((token) => !token.is_final),
       {
-        group_by: getSegmentGroupBy(appliedPreferences),
+        ...(groupBy.length > 0 ? { group_by: groupBy } : {}),
         final_only: false
       }
     );
@@ -1370,7 +1650,10 @@ export function LiveRecorder({
             segment.tokens,
             "live",
             `live-${Date.now()}-${index}`,
-            "soniox"
+            "soniox",
+            appliedPreferences.enableLiveTranslation
+              ? buildSegmentTranslationText(segment.tokens, translatedTokens)
+              : null
           )
         )
         .filter((line): line is TranscriptLine => Boolean(line))
@@ -1382,23 +1665,7 @@ export function LiveRecorder({
       return;
     }
 
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-      setAudioUrl(null);
-    }
-
-    if (audioDownloadUrl && audioDownloadUrl !== audioUrl) {
-      URL.revokeObjectURL(audioDownloadUrl);
-    }
-
-    setAudioDownloadUrl(null);
-    setAudioDownloadName("mystt-recording.audio");
-    setAudioPreviewNote(null);
-
-    if (audioDownloadUrl && audioDownloadUrl !== audioUrl) {
-      URL.revokeObjectURL(audioDownloadUrl);
-    }
-
+    setAudioUrl(null);
     setAudioDownloadUrl(null);
     setAudioDownloadName("mystt-recording.audio");
     setAudioPreviewNote(null);
@@ -1433,6 +1700,8 @@ export function LiveRecorder({
       return;
     }
 
+    void requestScreenWakeLock();
+
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
     startedAtRef.current = Date.now();
@@ -1456,7 +1725,11 @@ export function LiveRecorder({
       }
 
       const pcmSource = new PcmMicrophoneSource({
-        archiveAudio: !supportsArchiveRecorder(),
+        archiveAudio: shouldArchivePcmWavForUpload({
+          isDesktopShell: isTauriShell(),
+          supportsArchiveRecorder: supportsArchiveRecorder(),
+          prefersStableBrowserBlob: shouldPreferStableBrowserAudioBlob()
+        }),
         constraints: captureInput?.deviceId
           ? {
               deviceId: {
@@ -1651,6 +1924,7 @@ export function LiveRecorder({
         }, 3500);
       }
 
+      startedAtRef.current = Date.now();
       setPhase("recording");
       setMessage(
         "Soniox 실시간 자막을 연결했습니다. 바로 말하면 자막이 올라옵니다."
@@ -1692,7 +1966,7 @@ export function LiveRecorder({
         : [])
     ].filter((line): line is TranscriptLine => Boolean(line)));
 
-    return sonioxTranscript.replace(/\s+/g, "").length >= 20
+    return canUseTranscriptForPreview(sonioxTranscript)
       ? sonioxTranscript
       : browserTranscript;
   }
@@ -1706,7 +1980,7 @@ export function LiveRecorder({
   async function generateSummaryPreview() {
     const transcript = getEffectiveTranscript();
 
-    if (transcript.replace(/\s+/g, "").length < 20) {
+    if (!canUseTranscriptForPreview(transcript)) {
       setLastRealtimeError("정리하려면 조금 더 긴 대화가 필요합니다.");
       return;
     }
@@ -1744,12 +2018,9 @@ export function LiveRecorder({
     const activeRunId = runIdRef.current;
     const liveSessionId = liveSessionIdRef.current;
 
-    if (liveSessionId) {
-      await flushOpenAIFallback(activeRunId, liveSessionId, true);
-    }
-
     recordingRef.current?.pause();
     pcmSourceRef.current?.pause();
+    clearOpenAIFallbackTimer();
 
     if (archiveRecorderRef.current?.state === "recording") {
       archiveRecorderRef.current.pause();
@@ -1760,6 +2031,12 @@ export function LiveRecorder({
     setMessage(
       "일시정지했습니다. 다시 시작을 누르면 같은 Soniox 세션으로 이어집니다."
     );
+
+    if (liveSessionId) {
+      void flushOpenAIFallbackForCommand(activeRunId, liveSessionId).catch(
+        () => undefined
+      );
+    }
   }
 
   function resumeRecording() {
@@ -1789,21 +2066,12 @@ export function LiveRecorder({
     setMessage("녹음을 저장하고 요약을 생성하는 중입니다.");
     const activeRunId = runIdRef.current;
     const liveSessionId = liveSessionIdRef.current;
-
-    if (liveSessionId) {
-      await flushOpenAIFallback(activeRunId, liveSessionId, true);
-    }
-
-    runIdRef.current += 1;
-
     const recording = recordingRef.current;
     const pcmSource = pcmSourceRef.current;
 
-    recordingRef.current = null;
-    pcmSourceRef.current = null;
-    liveSessionIdRef.current = null;
     stopBrowserFallback();
-    stopOpenAIFallback();
+    clearOpenAIFallbackTimer();
+
     let nextAudioUrl: string | null = null;
     let nextAudioDownloadUrl: string | null = null;
     let nextAudioDownloadName = "mystt-recording.audio";
@@ -1821,16 +2089,40 @@ export function LiveRecorder({
           ? error.message
           : "실시간 자막 종료 중 오류가 발생했습니다."
       );
+    } finally {
+      pcmSource?.stop();
     }
+
+    if (liveSessionId) {
+      await flushOpenAIFallbackForCommand(activeRunId, liveSessionId);
+    }
+
+    runIdRef.current += 1;
+    recordingRef.current = null;
+    pcmSourceRef.current = null;
+    liveSessionIdRef.current = null;
+    stopOpenAIFallback();
 
     appendUtteranceTranscript();
 
     const audioBlob = pcmSource?.getWavBlob();
-    const previewBlob = !isTauriShell()
+    const inlineAudioPreviewEnabled = shouldUseInlineAudioPreview({
+      isDesktopShell: isTauriShell()
+    });
+    const previewBlob = inlineAudioPreviewEnabled
       ? (audioBlob && canPreviewAudioMimeType(audioBlob.type) ? audioBlob : null) ??
         (archiveBlob && canPreviewAudioMimeType(archiveBlob.type) ? archiveBlob : null)
       : null;
-    const downloadableBlob = archiveBlob ?? audioBlob;
+    const canonicalUploadBlob = await buildPreferredRecordingUpload({
+      pcmWavBlob: audioBlob,
+      archiveBlob,
+      expectedDurationMs: startedAtRef.current
+        ? Date.now() - startedAtRef.current
+        : undefined,
+      resolveBlobDurationMs: resolveBrowserAudioDurationMs,
+      encodePcmWavToMp3: encodePcmWavBlobToMp3
+    });
+    const downloadableBlob = canonicalUploadBlob ?? archiveBlob ?? audioBlob;
 
     if (previewBlob) {
       nextAudioUrl = URL.createObjectURL(previewBlob);
@@ -1842,37 +2134,43 @@ export function LiveRecorder({
         downloadableBlob === previewBlob && nextAudioUrl
           ? nextAudioUrl
           : URL.createObjectURL(downloadableBlob);
-      nextAudioDownloadName = `mystt-recording.${getAudioFileExtension(
-        downloadableBlob.type || ""
-      )}`;
+      nextAudioDownloadName = buildRecordingFileName({
+        blob: downloadableBlob
+      });
       setAudioDownloadUrl(nextAudioDownloadUrl);
       setAudioDownloadName(nextAudioDownloadName);
 
-      if (!previewBlob) {
+      if (!previewBlob && inlineAudioPreviewEnabled) {
         nextAudioPreviewNote =
           downloadableBlob.type && downloadableBlob.type !== "application/octet-stream"
-            ? `${downloadableBlob.type} 포맷은 이 환경에서 바로 재생되지 않아 다운로드 링크로만 제공합니다.`
-            : "이 환경에서는 방금 저장한 오디오 미리듣기를 바로 재생하지 못해 다운로드 링크로만 제공합니다.";
+            ? `${downloadableBlob.type} 포맷은 다운로드 링크로 제공합니다.`
+            : "이 환경에서는 미리듣기 없이 다운로드 링크로 제공합니다.";
         setAudioPreviewNote(nextAudioPreviewNote);
       }
     }
 
     const transcript = getEffectiveTranscript();
+    const hasTranscriptPreview = canUseTranscriptForPreview(transcript);
+    const canPersistSourceAudio = shouldPersistStoppedRecording({
+      canonicalUploadBlobAvailable: Boolean(canonicalUploadBlob),
+      realtimeTranscript: transcript
+    });
 
-    if (transcript.replace(/\s+/g, "").length < 20) {
-      setPhase("idle");
-      setRecordingState("idle");
-      setMessage("인식된 내용이 짧아서 저장하지 않았습니다. 조금 더 길게 말한 뒤 다시 녹음해 주세요.");
-      return;
-    }
-
-    if (!downloadableBlob) {
+    if (!canonicalUploadBlob || !canPersistSourceAudio) {
       setPhase("error");
       setRecordingState("error");
       setMessage(
         "원본 음성 파일을 만들지 못했습니다. 다시 녹음해 주세요."
       );
+      void releaseScreenWakeLock();
       return;
+    }
+
+    if (!hasTranscriptPreview) {
+      setAudioPreviewNote((current) =>
+        current ??
+        "실시간 자막이 짧아 미리보기 노트는 생략하고 원본 음성으로 최종 전사를 진행합니다."
+      );
     }
 
     let createdSessionId: string | null = null;
@@ -1901,22 +2199,26 @@ export function LiveRecorder({
 
       const snapshot = await finalizePortalRecording({
         sessionId: created.id,
-        file: downloadableBlob,
-        fileName: nextAudioDownloadName,
+        file: canonicalUploadBlob,
+        fileName: buildRecordingFileName({
+          blob: canonicalUploadBlob
+        }),
         wait: true,
         onSourceAudioUploaded: () => {
           sourceAudioUploaded = true;
 
-          if (isTauriShell()) {
-            const inlinePreviewHref = `${getSessionSourceAudioPreviewHref(created.id)}&ts=${Date.now()}`;
-            const downloadHref = getSessionSourceAudioHref(created.id);
-            setAudioUrl(inlinePreviewHref);
-            setAudioDownloadUrl(downloadHref);
-            setAudioDownloadName(nextAudioDownloadName);
-            setAudioPreviewNote(null);
-          }
+          setAudioUrl(getSessionSourceAudioPreviewHref(created.id));
+          setAudioDownloadUrl(getSessionSourceAudioHref(created.id, { format: "mp3" }));
+          setAudioDownloadName(buildDesktopDownloadFileName(nextAudioDownloadName));
+          setAudioPreviewNote(null);
         }
       });
+      const finalizedArchiveSessionId = finalizedArchiveSessionIdRef.current;
+      if (finalizedArchiveSessionId) {
+        await discardLiveRecordingArchive(finalizedArchiveSessionId).catch(() => undefined);
+        finalizedArchiveSessionIdRef.current = null;
+        void refreshRecoverableArchives();
+      }
 
       setLastSavedSessionId(created.id);
       if (snapshot.notes) {
@@ -1934,8 +2236,13 @@ export function LiveRecorder({
       setRecordingState("idle");
 
       if (snapshot.session.status !== "completed") {
+        if (onSaved) {
+          onSaved(created.id);
+        }
+
         setPhase("processing");
         setMessage(getPortalProcessingMessage(snapshot.session.status));
+        void releaseScreenWakeLock();
         return;
       }
 
@@ -1945,13 +2252,21 @@ export function LiveRecorder({
           ? "보조 자막이 있어도 최종 저장은 Soniox async 최종본으로 마쳤고, 요약 노트까지 생성했습니다."
           : "녹음을 저장했고, Soniox async 최종본 기준으로 요약 노트까지 생성했습니다."
       );
+      void releaseScreenWakeLock();
 
       if (onSaved) {
         onSaved(created.id);
       }
     } catch (error) {
       if (createdSessionId && !sourceAudioUploaded) {
-        await deletePortalSession(createdSessionId).catch(() => undefined);
+        await failPortalSession({
+          sessionId: createdSessionId,
+          reason:
+            error instanceof Error
+              ? error.message
+              : "Source audio upload failed before reaching processing.",
+          phase: "source_audio_upload"
+        }).catch(() => undefined);
       }
       if (createdSessionId && sourceAudioUploaded) {
         setLastSavedSessionId(createdSessionId);
@@ -1967,6 +2282,7 @@ export function LiveRecorder({
             ? `녹음 저장에 실패했습니다. ${error.message}`
             : "녹음 저장 또는 최종 전사/노트 생성에 실패했습니다."
       );
+      void releaseScreenWakeLock();
     }
   }
 
@@ -1981,18 +2297,11 @@ export function LiveRecorder({
     recordingRef.current?.cancel();
     recordingRef.current = null;
     pcmSourceRef.current?.clear();
+    pcmSourceRef.current?.stop();
     pcmSourceRef.current = null;
     await discardArchiveRecorder();
 
-    if (audioUrl) {
-      URL.revokeObjectURL(audioUrl);
-      setAudioUrl(null);
-    }
-
-    if (audioDownloadUrl && audioDownloadUrl !== audioUrl) {
-      URL.revokeObjectURL(audioDownloadUrl);
-    }
-
+    setAudioUrl(null);
     setAudioDownloadUrl(null);
     setAudioDownloadName("mystt-recording.audio");
     setAudioPreviewNote(null);
@@ -2007,11 +2316,13 @@ export function LiveRecorder({
     setMessage("현재 녹음을 취소했습니다. 다시 시작하면 새 자막 세션으로 열립니다.");
     setRecordingState("canceled");
     setIsPaused(false);
+    void releaseScreenWakeLock();
     setArchivePersistenceMode("대기");
     setPcmChunkCount(0);
     setInputLevel(0);
     setInputPeak(0);
     liveSessionIdRef.current = null;
+    void refreshRecoverableArchives();
   }
 
   function handleLatestAudioDownload(event: MouseEvent<HTMLAnchorElement>) {
@@ -2029,12 +2340,223 @@ export function LiveRecorder({
       {
         type: "mystt.desktop.download-file",
         url: desktopDownloadUrl,
-        fileName: audioDownloadName,
+        fileName: buildDesktopDownloadFileName(audioDownloadName),
+        targetFormat: audioDownloadUrl?.includes("format=mp3") ? "original" : "mp3",
         sessionTitle: title.trim() || "방금 녹음한 파일"
       },
       "*"
     );
-    setMessage("방금 녹음한 파일을 앱 다운로드 폴더에 저장하는 중입니다.");
+    setMessage("방금 녹음한 파일을 앱 다운로드 폴더에 mp3로 저장하는 중입니다.");
+  }
+
+  function formatRecoverableArchiveCreatedAt(
+    archive: RecoverableLiveRecordingArchive
+  ) {
+    const createdAt = new Date(archive.createdAt);
+
+    if (Number.isNaN(createdAt.getTime())) {
+      return archive.createdAt;
+    }
+
+    return createdAt.toLocaleString("ko-KR");
+  }
+
+  async function discardRecoverableArchive(
+    archive: RecoverableLiveRecordingArchive
+  ) {
+    if (recoveringArchiveSessionId === archive.sessionId) {
+      return;
+    }
+
+    await discardLiveRecordingArchive(archive.sessionId);
+    await refreshRecoverableArchives();
+    setMessage("선택한 로컬 복구 archive를 폐기했습니다.");
+  }
+
+  async function uploadRecoverableArchive(
+    archive: RecoverableLiveRecordingArchive
+  ) {
+    if (phase === "requesting" || phase === "recording" || phase === "saving") {
+      setMessage("현재 녹음 흐름이 끝난 뒤 로컬 복구 archive를 처리해 주세요.");
+      return;
+    }
+
+    if (!shouldAllowRecoverableArchiveUpload(archive)) {
+      setMessage(buildRecoverableArchiveStatusText(archive));
+      return;
+    }
+
+    setRecoveringArchiveSessionId(archive.sessionId);
+    setPhase("saving");
+    setRecordingState("saving");
+    setMessage("IndexedDB에 남아 있던 원본 음성을 복구해 업로드하는 중입니다.");
+
+    let createdSessionId: string | null = null;
+    let sourceAudioUploaded = false;
+
+    try {
+      const recoveredBlob = await finalizeLiveRecordingArchive(archive.sessionId);
+      const recoveryPreferences = activePreferencesRef.current;
+
+      if (!recoveredBlob) {
+        throw new Error(
+          "로컬 복구 archive가 불완전해 잘린 오디오 업로드를 중단했습니다."
+        );
+      }
+
+      const created = await createPortalSession({
+        title: `복구 녹음 ${formatRecoverableArchiveCreatedAt(archive)}`,
+        mode,
+        projectKey: projectKey.trim() || undefined,
+        languageHints: recoveryPreferences.enableMixedLanguage
+          ? ["ko", "en"]
+          : ["ko"],
+        realtimeOptions: {
+          enableMixedLanguage: recoveryPreferences.enableMixedLanguage,
+          enableSpeakerDiarization:
+            recoveryPreferences.enableSpeakerDiarization,
+          highlightLowConfidence:
+            recoveryPreferences.highlightLowConfidence,
+          enableLiveTranslation: recoveryPreferences.enableLiveTranslation,
+          endpointDelayMs: recoveryPreferences.endpointDelayMs,
+          contextTerms: parseContextTerms(
+            recoveryPreferences.contextTermsText
+          ),
+          inputDeviceLabel: null
+        }
+      });
+      createdSessionId = created.id;
+
+      const snapshot = await finalizePortalRecording({
+        sessionId: created.id,
+        file: recoveredBlob,
+        fileName: buildRecordingFileName({
+          blob: recoveredBlob
+        }),
+        wait: true,
+        onSourceAudioUploaded: () => {
+          sourceAudioUploaded = true;
+
+          setAudioUrl(getSessionSourceAudioPreviewHref(created.id));
+          setAudioDownloadUrl(getSessionSourceAudioHref(created.id, { format: "mp3" }));
+          setAudioDownloadName("mystt-recovered-recording.mp3");
+          setAudioPreviewNote(null);
+        }
+      });
+
+      await discardLiveRecordingArchive(archive.sessionId);
+      await refreshRecoverableArchives();
+      setLastSavedSessionId(created.id);
+
+      if (snapshot.notes) {
+        setSummaryPreview({
+          model: snapshot.notes.model,
+          notes: snapshot.notes.notes
+        });
+        setWorkspaceView("summary");
+      }
+
+      if (snapshot.session.status === "failed") {
+        throw new Error("Soniox async 최종 처리에 실패했습니다.");
+      }
+
+      setRecordingState("idle");
+
+      if (snapshot.session.status !== "completed") {
+        if (onSaved) {
+          onSaved(created.id);
+        }
+
+        setPhase("processing");
+        setMessage(getPortalProcessingMessage(snapshot.session.status));
+        return;
+      }
+
+      setPhase("saved");
+      setMessage(
+        "IndexedDB에 남아 있던 원본 음성을 업로드했고, Soniox async 최종본 기준으로 요약 노트까지 생성했습니다."
+      );
+
+      if (onSaved) {
+        onSaved(created.id);
+      }
+    } catch (error) {
+      if (createdSessionId && !sourceAudioUploaded) {
+        await failPortalSession({
+          sessionId: createdSessionId,
+          reason:
+            error instanceof Error
+              ? error.message
+              : "Recovered source audio upload failed before reaching processing.",
+          phase: "source_audio_upload"
+        }).catch(() => undefined);
+      }
+
+      if (createdSessionId && sourceAudioUploaded) {
+        setLastSavedSessionId(createdSessionId);
+      }
+
+      setPhase("error");
+      setRecordingState("error");
+      setMessage(
+        sourceAudioUploaded
+          ? error instanceof Error
+            ? `복구 원본 음성은 저장했지만 최종 전사/노트 생성에 실패했습니다. ${error.message}`
+            : "복구 원본 음성은 저장했지만 최종 전사/노트 생성에 실패했습니다."
+          : error instanceof Error
+            ? `로컬 복구 archive 업로드에 실패했습니다. ${error.message}`
+            : "로컬 복구 archive 업로드에 실패했습니다."
+      );
+    } finally {
+      setRecoveringArchiveSessionId(null);
+      void refreshRecoverableArchives();
+    }
+  }
+
+  function runIOSFocusShortcut(kind: "start" | "stop") {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const returnUrl = new URL(window.location.href);
+    returnUrl.searchParams.delete("debug");
+    const support = getIOSFocusShortcutBrowserSupport(window.navigator.userAgent);
+    if (!support.canUseFocusShortcutRoundTrip) {
+      setMessage(support.guidance);
+      return;
+    }
+
+    if (
+      !canRunIOSFocusShortcutAction({
+        kind,
+        phase,
+        enabled: isIOSFocusShortcutEnabled,
+        support
+      })
+    ) {
+      setMessage(
+        kind === "start"
+          ? "녹음 중에는 iPhone 집중 시작 단축어를 다시 실행하지 않습니다."
+          : "iPhone 단축어가 꺼져 있습니다. 단축어를 켠 뒤 집중 해제를 눌러 주세요."
+      );
+      return;
+    }
+
+    const shortcutReturnUrl = buildIOSShortcutReturnUrl(
+      returnUrl.toString(),
+      window.navigator.userAgent
+    );
+    if (!shortcutReturnUrl) {
+      setMessage(support.guidance);
+      return;
+    }
+
+    setMessage(
+      kind === "start"
+        ? "iPhone 단축어로 집중 모드를 켭니다. 단축어가 MYSTT로 돌아오면 녹음을 시작하세요."
+        : "iPhone 단축어로 집중 모드를 해제합니다."
+    );
+    window.location.assign(buildIOSFocusShortcutUrl(kind, shortcutReturnUrl));
   }
 
   const sonioxDisplayLines = [...transcriptLines, ...liveLines];
@@ -2053,7 +2575,6 @@ export function LiveRecorder({
   const transcriptText = buildTranscriptText(displayLines);
   const controlsDisabled =
     phase === "requesting" || phase === "recording" || phase === "saving";
-  const canSummarize = effectiveTranscript.replace(/\s+/g, "").length >= 20;
   const desktopBridgeDownloadUrl =
     audioDownloadUrl && typeof window !== "undefined"
       ? resolveDesktopDownloadUrl(audioDownloadUrl, window.location.href)
@@ -2061,8 +2582,8 @@ export function LiveRecorder({
   const audioDownloadHint = isEmbeddedDesktopShell
     ? desktopBridgeDownloadUrl
       ? desktopDownloadsDir
-        ? `다운로드하면 이 앱의 기본 저장 폴더인 ${desktopDownloadsDir} 에 저장됩니다.`
-        : "다운로드하면 이 앱의 기본 Downloads 폴더에 저장됩니다."
+        ? `다운로드하면 이 앱의 기본 저장 폴더인 ${desktopDownloadsDir} 에 mp3로 저장됩니다.`
+        : "다운로드하면 이 앱의 기본 Downloads 폴더에 mp3로 저장됩니다."
       : "원본 업로드를 마치기 전까지는 현재 창 다운로드로 저장됩니다."
     : "다운로드하면 현재 브라우저의 기본 다운로드 폴더로 저장됩니다.";
   const shouldWarnAboutInsecureContext =
@@ -2070,6 +2591,20 @@ export function LiveRecorder({
     typeof window !== "undefined" &&
     window.location.hostname !== "localhost" &&
     window.location.hostname !== "127.0.0.1";
+  const canUseIOSFocusShortcuts =
+    iosFocusShortcutSupport?.canUseFocusShortcutRoundTrip ?? false;
+  const canStartIOSFocusShortcut = canRunIOSFocusShortcutAction({
+    kind: "start",
+    phase,
+    enabled: isIOSFocusShortcutEnabled,
+    support: iosFocusShortcutSupport
+  });
+  const canStopIOSFocusShortcut = canRunIOSFocusShortcutAction({
+    kind: "stop",
+    phase,
+    enabled: isIOSFocusShortcutEnabled,
+    support: iosFocusShortcutSupport
+  });
 
   return (
     <section className="sectionCard recorderCard">
@@ -2077,27 +2612,6 @@ export function LiveRecorder({
         <div>
           <p className="sectionEyebrow">새 녹음</p>
           <h2 className="sectionTitleLarge">{activeModeProfile.liveTitle}</h2>
-        </div>
-        <div className="statusCluster">
-          <span className="statusChip">
-            {supportsLiveCaption === null
-              ? "브라우저 연결 확인 중"
-              : supportsLiveCaption
-                ? "Soniox 실시간 자막 연결 가능"
-                : "브라우저 환경 확인 필요"}
-          </span>
-          <span className="statusChip">
-            {captionSource === "soniox"
-              ? "실시간 자막: Soniox"
-              : captionSource === "openai"
-                ? "실시간 자막: OpenAI 보조"
-              : captionSource === "browser"
-                ? "실시간 자막: 브라우저 보조"
-                : "실시간 자막 대기 중"}
-          </span>
-          <span className="statusChip">
-            {effectivePreferences.enableMixedLanguage ? "한·영 혼용 감지" : "한국어 우선 인식"}
-          </span>
         </div>
       </div>
 
@@ -2173,21 +2687,288 @@ export function LiveRecorder({
               </button>
             ))}
           </div>
-          <div className="modeFeatureRow">
-            {activeModeProfile.featureBadges.map((badge) => (
-              <span key={badge} className="detailPill">
-                {badge}
-              </span>
-            ))}
-            <span className="detailPill">
-              문장 확정 {effectivePreferences.endpointDelayMs}ms
-            </span>
-          </div>
         </div>
 
       </div>
 
       <div className="recorderMain">
+        <aside className="recordSidebar">
+          <div className="recordConsole">
+            {isLikelyIOSFocusDevice ? (
+              <div className="focusShortcutPanel">
+                <div className="focusShortcutHead">
+                  <p className="recordLabel">iPhone 단축어</p>
+                  <label className="focusShortcutToggle">
+                    <span>{isIOSFocusShortcutEnabled ? "켬" : "끔"}</span>
+                    <input
+                      type="checkbox"
+                      checked={isIOSFocusShortcutEnabled}
+                      disabled={!canUseIOSFocusShortcuts}
+                      onChange={(event) =>
+                        setIsIOSFocusShortcutEnabled(event.target.checked)
+                      }
+                    />
+                  </label>
+                </div>
+
+                {canUseIOSFocusShortcuts ? (
+                  <div className="focusShortcutActions">
+                    <button
+                      type="button"
+                      className="ghostButton"
+                      onClick={() => runIOSFocusShortcut("start")}
+                      disabled={!canStartIOSFocusShortcut}
+                      title={`단축어: ${iosFocusStartShortcutName}`}
+                    >
+                      집중 시작
+                    </button>
+                    <button
+                      type="button"
+                      className="ghostButton ghostButtonSecondary"
+                      onClick={() => runIOSFocusShortcut("stop")}
+                      disabled={!canStopIOSFocusShortcut}
+                      title={`단축어: ${iosFocusStopShortcutName}`}
+                    >
+                      집중 해제
+                    </button>
+                  </div>
+                ) : (
+                  <p className="recordHint focusShortcutWarning">
+                    {iosFocusShortcutSupport?.guidance}
+                  </p>
+                )}
+              </div>
+            ) : null}
+
+            {recoverableArchives.length > 0 ? (
+              <div className="archiveRecoveryPanel">
+                <div className="archiveRecoveryHead">
+                  <p className="recordLabel">로컬 복구</p>
+                  <button
+                    type="button"
+                    className="ghostButton ghostButtonSecondary archiveRecoveryRefresh"
+                    onClick={() => void refreshRecoverableArchives()}
+                    disabled={Boolean(recoveringArchiveSessionId)}
+                  >
+                    새로고침
+                  </button>
+                </div>
+
+                <div className="archiveRecoveryList">
+                  {recoverableArchives.map((archive) => {
+                    const canUploadArchive =
+                      shouldAllowRecoverableArchiveUpload(archive);
+                    const isBusy = recoveringArchiveSessionId === archive.sessionId;
+
+                    return (
+                      <div key={archive.sessionId} className="archiveRecoveryItem">
+                        <strong>{formatRecoverableArchiveCreatedAt(archive)}</strong>
+                        <span>
+                          {archive.mimeType || "audio"} · {archive.chunkCount}개 조각
+                        </span>
+                        <p>{buildRecoverableArchiveStatusText(archive)}</p>
+                        <div className="archiveRecoveryActions">
+                          {canUploadArchive ? (
+                            <button
+                              type="button"
+                              className="ghostButton"
+                              onClick={() => void uploadRecoverableArchive(archive)}
+                              disabled={
+                                Boolean(recoveringArchiveSessionId) || controlsDisabled
+                              }
+                            >
+                              {isBusy ? "복구 중" : "복구 업로드"}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="ghostButton ghostButtonSecondary"
+                            onClick={() => void discardRecoverableArchive(archive)}
+                            disabled={Boolean(recoveringArchiveSessionId)}
+                          >
+                            폐기
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            <div>
+              <p className="recordLabel">현재 상태</p>
+              <strong className="recordTimer">{formatDurationClock(elapsedSeconds)}</strong>
+              <p className="recordHint">{message}</p>
+              {phase === "recording" || screenAwakeStatus !== "idle" ? (
+                <p className="recordHint">
+                  화면 유지:{" "}
+                  {screenAwakeStatus === "active"
+                    ? "켜짐"
+                    : screenAwakeStatus === "unsupported"
+                      ? "브라우저 미지원"
+                      : screenAwakeStatus === "error"
+                        ? "요청 실패"
+                        : screenAwakeStatus === "released"
+                          ? "해제됨"
+                          : "준비 중"}
+                </p>
+              ) : null}
+            </div>
+            <div className="recordActions">
+              <button
+                type="button"
+                className="recordButton"
+                onClick={() => void startRecording()}
+                disabled={controlsDisabled}
+              >
+                <span className="recordLabelFull">
+                  {phase === "requesting"
+                    ? "준비 중"
+                    : phase === "recording"
+                      ? "녹음 중"
+                      : "녹음 시작"}
+                </span>
+                <span className="recordLabelShort" aria-hidden="true">
+                  {phase === "requesting"
+                    ? "준비"
+                    : phase === "recording"
+                      ? "녹음"
+                      : "시작"}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="ghostButton"
+                onClick={() =>
+                  isPaused ? void resumeRecording() : void pauseRecording()
+                }
+                disabled={phase !== "recording"}
+              >
+                <span className="recordLabelFull">{isPaused ? "다시 시작" : "일시정지"}</span>
+                <span className="recordLabelShort" aria-hidden="true">
+                  {isPaused ? "재개" : "정지"}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="ghostButton ghostButtonSecondary"
+                onClick={() => void stopRecording()}
+                disabled={phase !== "recording"}
+              >
+                <span className="recordLabelFull">저장하고 종료</span>
+                <span className="recordLabelShort" aria-hidden="true">저장</span>
+              </button>
+              <button
+                type="button"
+                className="ghostButton ghostButtonDanger"
+                onClick={() => void cancelRecording()}
+                disabled={phase !== "requesting" && phase !== "recording"}
+              >
+                <span className="recordLabelFull">취소</span>
+                <span className="recordLabelShort" aria-hidden="true">취소</span>
+              </button>
+            </div>
+
+            {audioUrl || audioDownloadUrl ? (
+              <div className="audioPreview audioPreviewDetailed">
+                <span>방금 녹음한 파일</span>
+                {audioUrl ? (
+                  <audio
+                    ref={audioRef}
+                    controls
+                    src={audioUrl}
+                    onError={() => {
+                      setAudioUrl(null);
+                      setAudioPreviewNote(
+                        "미리듣기는 생략하고 아래 다운로드 링크로 확인해 주세요."
+                      );
+                    }}
+                  />
+                ) : null}
+                {audioPreviewNote ? (
+                  <p className="recordHint">{audioPreviewNote}</p>
+                ) : null}
+                {audioDownloadUrl ? (
+                  <>
+                    <a
+                      className="inlineLink"
+                      href={audioDownloadUrl}
+                      download={audioDownloadName}
+                      onClick={handleLatestAudioDownload}
+                    >
+                      방금 녹음한 파일 다운로드
+                    </a>
+                    <p className="recordHint">{audioDownloadHint}</p>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
+            {lastSavedSessionId ? (
+              <a className="inlineLink" href={`/sessions/${lastSavedSessionId}`}>
+                방금 저장한 기록 보기
+              </a>
+            ) : null}
+
+            {showDiagnostics ? (
+              <details className="diagnosticDisclosure">
+                <summary>입력 진단 보기</summary>
+                <div className="diagnosticGrid">
+                  <span className="diagnosticItem">연결 상태: {recordingState}</span>
+                  <span className="diagnosticItem">
+                    자막 소스: {formatCaptionSourceLabel(captionSource)}
+                  </span>
+                  <span className="diagnosticItem">토큰 수: {tokenCount}</span>
+                  <span className="diagnosticItem">PCM 청크 수: {pcmChunkCount}</span>
+                  <span className="diagnosticItem">
+                    OpenAI 보조 청크: {openAIChunkCount}
+                  </span>
+                  <span className="diagnosticItem">
+                    오디오 보존: {archivePersistenceMode}
+                  </span>
+                  <span className="diagnosticItem">
+                    엔드포인트 지연: {(phase === "recording"
+                      ? sessionPreferencesRef.current.endpointDelayMs
+                      : effectivePreferences.endpointDelayMs)}ms
+                  </span>
+                  <span className="diagnosticItem">실시간 세션 한도: 300분</span>
+                  <span className="diagnosticItem">입력 레벨: {inputLevel}</span>
+                  <span className="diagnosticItem">입력 피크: {inputPeak}</span>
+                  <span className="diagnosticItem">마이크 권한: {micPermissionState}</span>
+                  <span className="diagnosticItem">
+                    마이크 트랙: {micTrackState}
+                    {micMuted ? " / muted" : ""}
+                  </span>
+                  {micLabel ? (
+                    <span className="diagnosticItem">입력 장치: {micLabel}</span>
+                  ) : audioInputDevices.length === 0 ? (
+                    <span className="diagnosticItem">
+                      입력 장치: 모바일 브라우저 기본 마이크 또는 권한 대기
+                    </span>
+                  ) : null}
+                  <span className="diagnosticItem">
+                    보안 컨텍스트: {secureContextState === "secure" ? "HTTPS/로컬허용" : secureContextState === "insecure" ? "비보안" : "확인 중"}
+                  </span>
+                  <span className="diagnosticItem">
+                    브라우저 보조:{" "}
+                    {supportsBrowserFallback === null
+                      ? "확인 중"
+                      : supportsBrowserFallback
+                        ? "대기"
+                        : "없음"}
+                  </span>
+                  {lastRealtimeError ? (
+                    <span className="diagnosticItem diagnosticItemError">
+                      마지막 오류: {lastRealtimeError}
+                    </span>
+                  ) : null}
+                </div>
+              </details>
+            ) : null}
+          </div>
+        </aside>
+
         <section className="workspaceSurface">
           <div className="workspaceHeader">
             <div>
@@ -2277,18 +3058,23 @@ export function LiveRecorder({
                               {buildJumpLabel(lineRange.startMs, lineRange.endMs)}
                             </span>
                           ) : null}
-                          {line.speaker ? (
-                            <span className="transcriptTag">화자 {line.speaker}</span>
-                          ) : null}
                           {line.language ? (
                             <span className="transcriptTag">{line.language.toUpperCase()}</span>
                           ) : null}
-                          {line.kind === "live" ? (
+                          {line.translationText ? (
+                            <span className="transcriptTag">번역 보조</span>
+                          ) : null}
+                        {line.kind === "live" ? (
                             <span className="transcriptTag">실시간</span>
                           ) : null}
                         </div>
                         <p className="transcriptText">
-                          {line.tokens.length > 0
+                          {line.tokens.length > 0 &&
+                          line.tokens
+                            .map((token) => token.text)
+                            .join("")
+                            .replace(/\s+/g, " ")
+                            .trim() === line.text
                             ? line.tokens.map((token, index) => (
                                 <span
                                   key={`${line.id}-${index}`}
@@ -2304,6 +3090,9 @@ export function LiveRecorder({
                               ))
                             : line.text}
                         </p>
+                        {line.translationText ? (
+                          <p className="transcriptTranslation">{line.translationText}</p>
+                        ) : null}
                       </article>
                     );
                   })}
@@ -2320,18 +3109,63 @@ export function LiveRecorder({
 
                 {summaryPreview ? (
                   <div className="workspaceScroll summaryLayout">
-                    <section className="summaryHero">
-                      <p className="sectionEyebrow">핵심 요약</p>
-                      <p className="summaryLead">{summaryPreview.notes.summary}</p>
-                    </section>
+	                    <section className="summaryHero">
+	                      <p className="sectionEyebrow">핵심 요약</p>
+	                      <div className="summaryLeadGroup">
+	                        {splitUserFacingStoryParagraphs(
+	                          isMeetingNotesV2(summaryPreview.notes)
+	                            ? summaryPreview.notes.oneLineConclusion
+	                            : summaryPreview.notes.summary
+	                        ).map((paragraph) => (
+	                          <p key={paragraph} className="summaryLead">
+	                            {paragraph}
+	                          </p>
+	                        ))}
+	                      </div>
+	                    </section>
 
-                    {summaryPreview.notes.mode === "meeting" ? (
-                      <div className="summaryGrid">
+	                    {isMeetingNotesV2(summaryPreview.notes) &&
+	                    summaryPreview.notes.reportSummary ? (
+	                      <section className="summaryBlock">
+	                        <strong>
+	                          {cleanUserFacingText(summaryPreview.notes.reportSummary.title)}
+	                        </strong>
+	                        <div>
+	                          <p className="sectionEyebrow">회의 배경</p>
+	                          {splitUserFacingParagraphs(
+	                            summaryPreview.notes.reportSummary.introduction
+	                          ).map((paragraph) => (
+	                            <p key={paragraph}>{paragraph}</p>
+	                          ))}
+	                        </div>
+	                        <div>
+	                          <p className="sectionEyebrow">핵심 내용</p>
+	                          <ul className="compactList">
+	                            {summaryPreview.notes.reportSummary.keyPoints.map((point) => (
+	                              <li key={point}>{cleanUserFacingText(point)}</li>
+	                            ))}
+	                          </ul>
+	                        </div>
+	                        <div>
+	                          <p className="sectionEyebrow">결론</p>
+	                          {splitUserFacingParagraphs(
+	                            summaryPreview.notes.reportSummary.conclusion
+	                          ).map((paragraph) => (
+	                            <p key={paragraph}>{paragraph}</p>
+	                          ))}
+	                        </div>
+	                      </section>
+	                    ) : null}
+
+	                    {summaryPreview.notes.mode === "meeting" ? (
+	                      <div className="summaryGrid">
                         <section className="summaryBlock">
                           <strong>결정</strong>
                           <ul className="compactList">
                             {summaryPreview.notes.decisions.map((item) => (
-                              <li key={`decision-${item.decision}`}>{item.decision}</li>
+                              <li key={`decision-${item.decision}`}>
+                                {cleanUserFacingText(item.decision)}
+                              </li>
                             ))}
                           </ul>
                         </section>
@@ -2341,45 +3175,96 @@ export function LiveRecorder({
                           <ul className="compactList">
                             {summaryPreview.notes.actionItems.map((item) => (
                               <li key={`action-${item.task}`}>
-                                {item.task}
-                                {item.owner ? ` · ${item.owner}` : ""}
-                                {item.dueDate ? ` · ${item.dueDate}` : ""}
+                                {cleanUserFacingText(item.task)}
+                                {item.owner ? ` · ${cleanUserFacingText(item.owner)}` : ""}
+                                {item.dueDate ? ` · ${cleanUserFacingText(item.dueDate)}` : ""}
                               </li>
                             ))}
                           </ul>
                         </section>
 
-                        {summaryPreview.notes.openQuestions.length > 0 ? (
+                        {!isMeetingNotesV2(summaryPreview.notes) &&
+                        summaryPreview.notes.openQuestions.length > 0 ? (
                           <section className="summaryBlock">
                             <strong>열린 질문</strong>
                             <ul className="compactList">
                               {summaryPreview.notes.openQuestions.map((item) => (
-                                <li key={`question-${item}`}>{item}</li>
+                                <li key={`question-${item}`}>{cleanUserFacingText(item)}</li>
                               ))}
                             </ul>
                           </section>
                         ) : null}
 
-                        {summaryPreview.notes.nextAgenda.length > 0 ? (
+                        {!isMeetingNotesV2(summaryPreview.notes) &&
+                        summaryPreview.notes.nextAgenda.length > 0 ? (
                           <section className="summaryBlock">
                             <strong>다음 안건</strong>
                             <ul className="compactList">
                               {summaryPreview.notes.nextAgenda.map((item) => (
-                                <li key={`agenda-${item}`}>{item}</li>
+                                <li key={`agenda-${item}`}>{cleanUserFacingText(item)}</li>
                               ))}
                             </ul>
                           </section>
                         ) : null}
-                      </div>
-                    ) : null}
 
-                    {summaryPreview.notes.mode === "speech" ? (
+                        {isMeetingNotesV2(summaryPreview.notes) &&
+                        summaryPreview.notes.openIssues.length > 0 ? (
+                          <section className="summaryBlock">
+                            <strong>미결사항</strong>
+                            <ul className="compactList">
+                            {summaryPreview.notes.openIssues.map((item) => (
+                              <li key={`issue-${item.content}`}>
+                                  {cleanUserFacingText(item.content)}
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ) : null}
+
+                        {isMeetingNotesV2(summaryPreview.notes) &&
+                        summaryPreview.notes.risks.length > 0 ? (
+                          <section className="summaryBlock">
+                            <strong>리스크</strong>
+                            <ul className="compactList">
+                            {summaryPreview.notes.risks.map((item) => (
+                              <li key={`risk-${item.content}`}>
+                                  {cleanUserFacingText(item.content)}
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ) : null}
+	                      </div>
+	                    ) : null}
+
+	                    {isMeetingNotesV2(summaryPreview.notes) ? (
+	                      <section className="summaryBlock">
+	                        <strong>주제 흐름</strong>
+	                        <ul className="compactList">
+	                          {getMeetingTopicTimeline(summaryPreview.notes).map((item) => (
+	                            <li key={item.id}>
+	                              {cleanUserFacingText(item.title)}
+	                              <br />
+	                              {cleanUserFacingText(item.discussion)}
+	                              {item.outcome ? (
+	                                <>
+	                                  <br />
+	                                  {`결과/남은 쟁점: ${cleanUserFacingText(item.outcome)}`}
+	                                </>
+	                              ) : null}
+	                            </li>
+	                          ))}
+	                        </ul>
+	                      </section>
+	                    ) : null}
+
+	                    {summaryPreview.notes.mode === "speech" ? (
                       <div className="summaryGrid">
                         <section className="summaryBlock">
                           <strong>핵심 메시지</strong>
                           <ul className="compactList">
                             {summaryPreview.notes.keyMessages.map((item) => (
-                              <li key={`key-${item}`}>{item}</li>
+                              <li key={`key-${item}`}>{cleanUserFacingText(item)}</li>
                             ))}
                           </ul>
                         </section>
@@ -2387,7 +3272,7 @@ export function LiveRecorder({
                           <strong>인용 문장</strong>
                           <ul className="compactList">
                             {summaryPreview.notes.quotableLines.map((item) => (
-                              <li key={`quote-${item}`}>{item}</li>
+                              <li key={`quote-${item}`}>{cleanUserFacingText(item)}</li>
                             ))}
                           </ul>
                         </section>
@@ -2400,7 +3285,7 @@ export function LiveRecorder({
                           <strong>핵심 인사이트</strong>
                           <ul className="compactList">
                             {summaryPreview.notes.keyInsights.map((item) => (
-                              <li key={`insight-${item}`}>{item}</li>
+                              <li key={`insight-${item}`}>{cleanUserFacingText(item)}</li>
                             ))}
                           </ul>
                         </section>
@@ -2408,7 +3293,7 @@ export function LiveRecorder({
                           <strong>후속 질문</strong>
                           <ul className="compactList">
                             {summaryPreview.notes.followUpQuestions.map((item) => (
-                              <li key={`follow-${item}`}>{item}</li>
+                              <li key={`follow-${item}`}>{cleanUserFacingText(item)}</li>
                             ))}
                           </ul>
                         </section>
@@ -2473,161 +3358,6 @@ export function LiveRecorder({
           </div>
         </section>
 
-        <aside className="recordSidebar">
-          <div className="recordConsole">
-            <div>
-              <p className="recordLabel">현재 상태</p>
-              <strong className="recordTimer">{formatDurationClock(elapsedSeconds)}</strong>
-              <p className="recordHint">{message}</p>
-            </div>
-            <div className="recordActions">
-              <button
-                type="button"
-                className="recordButton"
-                onClick={() => void startRecording()}
-                disabled={controlsDisabled}
-              >
-                {phase === "requesting"
-                  ? "준비 중"
-                  : phase === "recording"
-                    ? "녹음 중"
-                    : "녹음 시작"}
-              </button>
-              <button
-                type="button"
-                className="ghostButton"
-                onClick={() =>
-                  isPaused ? void resumeRecording() : void pauseRecording()
-                }
-                disabled={phase !== "recording"}
-              >
-                {isPaused ? "다시 시작" : "일시정지"}
-              </button>
-              <button
-                type="button"
-                className="ghostButton ghostButtonSecondary"
-                onClick={() => void stopRecording()}
-                disabled={phase !== "recording"}
-              >
-                저장하고 종료
-              </button>
-              <button
-                type="button"
-                className="ghostButton ghostButtonDanger"
-                onClick={() => void cancelRecording()}
-                disabled={phase !== "requesting" && phase !== "recording"}
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                className="ghostButton"
-                onClick={() => void generateSummaryPreview()}
-                disabled={summaryPending || !canSummarize}
-              >
-                {summaryPending ? "정리 중" : activeModeProfile.summaryActionLabel}
-              </button>
-            </div>
-
-            {audioUrl || audioDownloadUrl ? (
-              <div className="audioPreview audioPreviewDetailed">
-                <span>방금 녹음한 파일</span>
-                {audioUrl ? (
-                  <audio
-                    ref={audioRef}
-                    controls
-                    src={audioUrl}
-                    onError={() => {
-                      if (audioUrl) {
-                        URL.revokeObjectURL(audioUrl);
-                      }
-                      setAudioUrl(null);
-                      setAudioPreviewNote(
-                        "방금 저장한 파일을 이 환경에서 바로 재생하지 못했습니다. 아래 다운로드 링크로 확인해 주세요."
-                      );
-                    }}
-                  />
-                ) : null}
-                {audioPreviewNote ? (
-                  <p className="recordHint">{audioPreviewNote}</p>
-                ) : null}
-                {audioDownloadUrl ? (
-                  <>
-                    <a
-                      className="inlineLink"
-                      href={audioDownloadUrl}
-                      download={audioDownloadName}
-                      onClick={handleLatestAudioDownload}
-                    >
-                      방금 녹음한 파일 다운로드
-                    </a>
-                    <p className="recordHint">{audioDownloadHint}</p>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-
-            {lastSavedSessionId ? (
-              <a className="inlineLink" href={`/sessions/${lastSavedSessionId}`}>
-                방금 저장한 기록 보기
-              </a>
-            ) : null}
-
-            <details className="diagnosticDisclosure">
-              <summary>입력 진단 보기</summary>
-              <div className="diagnosticGrid">
-                <span className="diagnosticItem">연결 상태: {recordingState}</span>
-                <span className="diagnosticItem">
-                  자막 소스: {formatCaptionSourceLabel(captionSource)}
-                </span>
-                <span className="diagnosticItem">토큰 수: {tokenCount}</span>
-                <span className="diagnosticItem">PCM 청크 수: {pcmChunkCount}</span>
-                <span className="diagnosticItem">
-                  OpenAI 보조 청크: {openAIChunkCount}
-                </span>
-                <span className="diagnosticItem">
-                  오디오 보존: {archivePersistenceMode}
-                </span>
-                <span className="diagnosticItem">
-                  엔드포인트 지연: {(phase === "recording"
-                    ? sessionPreferencesRef.current.endpointDelayMs
-                    : effectivePreferences.endpointDelayMs)}ms
-                </span>
-                <span className="diagnosticItem">실시간 세션 한도: 300분</span>
-                <span className="diagnosticItem">입력 레벨: {inputLevel}</span>
-                <span className="diagnosticItem">입력 피크: {inputPeak}</span>
-                <span className="diagnosticItem">마이크 권한: {micPermissionState}</span>
-                <span className="diagnosticItem">
-                  마이크 트랙: {micTrackState}
-                  {micMuted ? " / muted" : ""}
-                </span>
-                {micLabel ? (
-                  <span className="diagnosticItem">입력 장치: {micLabel}</span>
-                ) : audioInputDevices.length === 0 ? (
-                  <span className="diagnosticItem">
-                    입력 장치: 모바일 브라우저 기본 마이크 또는 권한 대기
-                  </span>
-                ) : null}
-                <span className="diagnosticItem">
-                  보안 컨텍스트: {secureContextState === "secure" ? "HTTPS/로컬허용" : secureContextState === "insecure" ? "비보안" : "확인 중"}
-                </span>
-                <span className="diagnosticItem">
-                  브라우저 보조:{" "}
-                  {supportsBrowserFallback === null
-                    ? "확인 중"
-                    : supportsBrowserFallback
-                      ? "대기"
-                      : "없음"}
-                </span>
-                {lastRealtimeError ? (
-                  <span className="diagnosticItem diagnosticItemError">
-                    마지막 오류: {lastRealtimeError}
-                  </span>
-                ) : null}
-              </div>
-            </details>
-          </div>
-        </aside>
       </div>
     </section>
   );

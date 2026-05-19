@@ -1,0 +1,44 @@
+{
+  "lane": "soniox-live",
+  "runId": "2026-04-18-02",
+  "status": "pass",
+  "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+  "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+  "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6",
+  "queueMode": "inline-fallback",
+  "capturedFields": {
+    "sourceAudioUploaded": {
+      "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+      "location": "/Volumes/mac_dock/github/mystt/.data/audio/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/coffee_shop.mp3",
+      "fileName": "coffee_shop.mp3",
+      "byteLength": 386958,
+      "sha256": "d39d1e2aff5da9425b5d0f1e010f020edbfdf97b62d4c5265a2da2ac61dbedde",
+      "contentType": "audio/mpeg"
+    },
+    "cleanupStatus": "completed",
+    "cleanupTargets": [
+      "transcriptions/5df91394-335b-408a-9d5d-68ebb47410c6",
+      "files/e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e"
+    ],
+    "cleanupLastError": null,
+    "processAuditKind": "session.process.inline_fallback",
+    "correlationHandles": {
+      "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+      "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+      "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6"
+    }
+  },
+  "evidence": {
+    "health": "../desktop/api-health.json",
+    "providersCheck": "providers-check.json",
+    "apiRun": "api-live-run.json",
+    "rawAudit": "audit-events-raw.json",
+    "snapshot": "session-snapshot.json",
+    "dockerPs": "docker-ps.txt"
+  },
+  "notes": [
+    "Fresh API create/upload/process/cleanup path completed successfully against local .data fallback storage.",
+    "Docker daemon and Redis remained unavailable, so this run exercised session.process.inline_fallback instead of session.process.enqueued.",
+    "Soniox upload, transcription completion, and cleanup completion are all captured in raw audit evidence for this run."
+  ]
+}

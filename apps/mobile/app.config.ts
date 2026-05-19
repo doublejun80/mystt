@@ -21,7 +21,12 @@ const config: ExpoConfig = {
   },
   android: {
     package: "com.mystt.recorder",
-    permissions: ["RECORD_AUDIO", "FOREGROUND_SERVICE", "WAKE_LOCK"],
+    permissions: [
+      "RECORD_AUDIO",
+      "FOREGROUND_SERVICE",
+      "FOREGROUND_SERVICE_MICROPHONE",
+      "WAKE_LOCK"
+    ],
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#0B1020"
@@ -54,7 +59,7 @@ const config: ExpoConfig = {
     [
       "expo-dev-client",
       {
-        launchMode: "last-opened"
+        launchMode: "most-recent"
       }
     ]
   ]

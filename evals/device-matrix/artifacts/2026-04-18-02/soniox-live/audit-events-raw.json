@@ -1,0 +1,208 @@
+[
+  {
+    "eventId": "8fa0c7ce-8b7c-4178-af0a-c4301f247cce",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "session.created",
+    "payload": {
+      "title": "Fresh API Live Smoke",
+      "mode": "meeting",
+      "projectKey": "smoke",
+      "languageHints": [
+        "ko",
+        "en"
+      ],
+      "realtimeOptions": null
+    },
+    "createdAt": "2026-04-18T04:47:09.199Z"
+  },
+  {
+    "eventId": "b074b1a7-2396-4d32-bf32-7df1039fabb8",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "source_audio.staged",
+    "payload": {
+      "location": "/Volumes/mac_dock/github/mystt/.data/audio/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/coffee_shop.mp3",
+      "fileName": "coffee_shop.mp3",
+      "byteLength": 386958,
+      "sha256": "d39d1e2aff5da9425b5d0f1e010f020edbfdf97b62d4c5265a2da2ac61dbedde",
+      "contentType": "audio/mpeg",
+      "sourceUrl": null
+    },
+    "createdAt": "2026-04-18T04:47:09.232Z"
+  },
+  {
+    "eventId": "a59ac8ff-910a-482e-af6b-db4217018abc",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "source_audio.soniox_uploaded",
+    "payload": {
+      "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+      "location": "/Volumes/mac_dock/github/mystt/.data/audio/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/coffee_shop.mp3",
+      "fileName": "coffee_shop.mp3",
+      "byteLength": 386958,
+      "sha256": "d39d1e2aff5da9425b5d0f1e010f020edbfdf97b62d4c5265a2da2ac61dbedde",
+      "contentType": "audio/mpeg"
+    },
+    "createdAt": "2026-04-18T04:47:11.475Z"
+  },
+  {
+    "eventId": "a1d48577-58a8-4df3-aa58-235d5bfa83c8",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "session.process.inline_fallback",
+    "payload": {
+      "source": "file_id"
+    },
+    "createdAt": "2026-04-18T04:47:11.487Z"
+  },
+  {
+    "eventId": "74715bb6-9f2f-4b35-aeb7-04b623d962c4",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "session.status.updated",
+    "payload": {
+      "from": "recording",
+      "to": "transcribing"
+    },
+    "createdAt": "2026-04-18T04:47:11.491Z"
+  },
+  {
+    "eventId": "8d3fe128-172b-4db1-bd9b-9dfee37c68f4",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "transcription.cleanup.updated",
+    "payload": {
+      "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6",
+      "cleanupStatus": "pending",
+      "cleanupTargets": [
+        "transcriptions/5df91394-335b-408a-9d5d-68ebb47410c6",
+        "files/e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e"
+      ],
+      "cleanupRequestedAt": "2026-04-18T04:47:11.703Z",
+      "cleanupCompletedAt": null,
+      "cleanupLastError": null
+    },
+    "createdAt": "2026-04-18T04:47:11.704Z"
+  },
+  {
+    "eventId": "99636b8c-5c6b-458d-9a8e-5fd21d6689b9",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "transcription.metadata.updated",
+    "payload": {
+      "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6",
+      "status": "queued",
+      "filename": "coffee_shop.mp3",
+      "audioUrl": null,
+      "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+      "cleanupTargets": [
+        "transcriptions/5df91394-335b-408a-9d5d-68ebb47410c6",
+        "files/e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e"
+      ],
+      "cleanupStatus": "pending"
+    },
+    "createdAt": "2026-04-18T04:47:11.704Z"
+  },
+  {
+    "eventId": "8d201236-4c6b-4c21-8808-2b122eb48cd4",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "transcription.metadata.updated",
+    "payload": {
+      "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6",
+      "status": "completed",
+      "filename": "coffee_shop.mp3",
+      "audioUrl": null,
+      "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+      "cleanupTargets": [
+        "transcriptions/5df91394-335b-408a-9d5d-68ebb47410c6",
+        "files/e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e"
+      ],
+      "cleanupStatus": "pending"
+    },
+    "createdAt": "2026-04-18T04:47:13.911Z"
+  },
+  {
+    "eventId": "04569288-4ad6-4fb7-a9aa-2ac1a412b558",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "session.status.updated",
+    "payload": {
+      "from": "transcribing",
+      "to": "summarizing"
+    },
+    "createdAt": "2026-04-18T04:47:14.309Z"
+  },
+  {
+    "eventId": "4a027324-3c6d-45aa-9462-f38f03c258f0",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "transcript.artifacts.saved",
+    "payload": {
+      "rawTranscriptPath": "/Volumes/mac_dock/github/mystt/.data/artifacts/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/raw_transcript.json",
+      "cleanTranscriptPath": "/Volumes/mac_dock/github/mystt/.data/artifacts/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/clean_transcript.md",
+      "textLength": 261,
+      "segmentCount": 79
+    },
+    "createdAt": "2026-04-18T04:47:14.637Z"
+  },
+  {
+    "eventId": "91b030fd-2da1-435f-b0d3-34b27b0a3054",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "session.status.updated",
+    "payload": {
+      "from": "summarizing",
+      "to": "emailing"
+    },
+    "createdAt": "2026-04-18T04:47:17.741Z"
+  },
+  {
+    "eventId": "83b3f47b-0897-4eb0-8d1f-a40029cc2842",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "notes.artifacts.saved",
+    "payload": {
+      "model": "gpt-5.4-mini",
+      "notesJsonPath": "/Volumes/mac_dock/github/mystt/.data/artifacts/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/meeting_notes.json",
+      "notesHtmlPath": "/Volumes/mac_dock/github/mystt/.data/artifacts/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/meeting_notes.html",
+      "notesDocxPath": "/Volumes/mac_dock/github/mystt/.data/artifacts/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/meeting_notes.docx",
+      "emailPreviewPath": "/Volumes/mac_dock/github/mystt/.data/artifacts/sessions/058268a8-a0af-43e7-ac88-8676413f09d9/email_preview.html"
+    },
+    "createdAt": "2026-04-18T04:47:18.226Z"
+  },
+  {
+    "eventId": "2f847196-acf1-4f3e-aa30-b2ee8255c0f6",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "transcription.cleanup.updated",
+    "payload": {
+      "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6",
+      "cleanupStatus": "completed",
+      "cleanupTargets": [
+        "transcriptions/5df91394-335b-408a-9d5d-68ebb47410c6",
+        "files/e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e"
+      ],
+      "cleanupRequestedAt": "2026-04-18T04:47:11.703Z",
+      "cleanupCompletedAt": "2026-04-18T04:47:18.459Z",
+      "cleanupLastError": null
+    },
+    "createdAt": "2026-04-18T04:47:18.459Z"
+  },
+  {
+    "eventId": "04514edd-91bd-4acd-89b2-dad2c2719c6f",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "transcription.metadata.updated",
+    "payload": {
+      "transcriptionId": "5df91394-335b-408a-9d5d-68ebb47410c6",
+      "status": "completed",
+      "filename": "coffee_shop.mp3",
+      "audioUrl": null,
+      "fileId": "e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e",
+      "cleanupTargets": [
+        "transcriptions/5df91394-335b-408a-9d5d-68ebb47410c6",
+        "files/e7aa92a5-ae15-4d9b-9bfd-c299ddbf068e"
+      ],
+      "cleanupStatus": "completed"
+    },
+    "createdAt": "2026-04-18T04:47:18.459Z"
+  },
+  {
+    "eventId": "f12046ed-f4da-4aab-9f3d-95167afcc7df",
+    "sessionId": "058268a8-a0af-43e7-ac88-8676413f09d9",
+    "kind": "session.status.updated",
+    "payload": {
+      "from": "emailing",
+      "to": "completed"
+    },
+    "createdAt": "2026-04-18T04:47:18.461Z"
+  }
+]

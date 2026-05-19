@@ -38,9 +38,6 @@ importers:
       '@mystt/audio-core':
         specifier: workspace:*
         version: link:../../packages/audio-core
-      '@mystt/insforge-bridge':
-        specifier: workspace:*
-        version: link:../../packages/insforge-bridge
       '@tauri-apps/api':
         specifier: ^2
         version: 2.10.1
@@ -66,9 +63,6 @@ importers:
       '@mystt/audio-core':
         specifier: workspace:*
         version: link:../../packages/audio-core
-      '@mystt/insforge-bridge':
-        specifier: workspace:*
-        version: link:../../packages/insforge-bridge
       '@mystt/ui-kit':
         specifier: workspace:*
         version: link:../../packages/ui-kit
@@ -87,6 +81,9 @@ importers:
       expo-file-system:
         specifier: ~18.0.12
         version: 18.0.12(expo@52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.2(@babel/core@7.29.0))(@expo/metro-runtime@4.0.1(react-native@0.76.5(@babel/core@7.29.0)(@babel/preset-env@7.29.2(@babel/core@7.29.0))(@types/react@18.3.28)(react@18.3.1)))(react-native@0.76.5(@babel/core@7.29.0)(@babel/preset-env@7.29.2(@babel/core@7.29.0))(@types/react@18.3.28)(react@18.3.1))(react@18.3.1))(react-native@0.76.5(@babel/core@7.29.0)(@babel/preset-env@7.29.2(@babel/core@7.29.0))(@types/react@18.3.28)(react@18.3.1))
+      expo-keep-awake:
+        specifier: ~14.0.3
+        version: 14.0.3(expo@52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.2(@babel/core@7.29.0))(@expo/metro-runtime@4.0.1(react-native@0.76.5(@babel/core@7.29.0)(@babel/preset-env@7.29.2(@babel/core@7.29.0))(@types/react@18.3.28)(react@18.3.1)))(react-native@0.76.5(@babel/core@7.29.0)(@babel/preset-env@7.29.2(@babel/core@7.29.0))(@types/react@18.3.28)(react@18.3.1))(react@18.3.1))(react@18.3.1)
       expo-router:
         specifier: ~4.0.19
         version: 4.0.22(484bd4d6b8fd392960a88e1be5db2c81)
@@ -105,12 +102,15 @@ importers:
 
   apps/web:
     dependencies:
+      '@breezystack/lamejs':
+        specifier: ^1.2.7
+        version: 1.2.7
       '@mystt/audio-core':
         specifier: workspace:*
         version: link:../../packages/audio-core
-      '@mystt/insforge-bridge':
+      '@mystt/transcript-normalizer':
         specifier: workspace:*
-        version: link:../../packages/insforge-bridge
+        version: link:../../packages/transcript-normalizer
       '@mystt/ui-kit':
         specifier: workspace:*
         version: link:../../packages/ui-kit
@@ -128,8 +128,6 @@ importers:
         version: 18.3.1(react@18.3.1)
 
   packages/audio-core: {}
-
-  packages/insforge-bridge: {}
 
   packages/notes-schema:
     dependencies:
@@ -181,9 +179,6 @@ importers:
       '@mystt/audio-core':
         specifier: workspace:*
         version: link:../../packages/audio-core
-      '@mystt/insforge-bridge':
-        specifier: workspace:*
-        version: link:../../packages/insforge-bridge
       '@mystt/notes-schema':
         specifier: workspace:*
         version: link:../../packages/notes-schema
@@ -1159,6 +1154,9 @@ packages:
   '@babel/types@7.29.0':
     resolution: {integrity: sha512-LwdZHpScM4Qz8Xw2iKSzS+cfglZzJGvofQICy7W7v4caru4EaAmyUuO6BGrbyQ2mYV11W0U8j5mBhd14dd3B0A==}
     engines: {node: '>=6.9.0'}
+
+  '@breezystack/lamejs@1.2.7':
+    resolution: {integrity: sha512-6wc7ck65ctA75Hq7FYHTtTvGnYs6msgdxiSUICQ+A01nVOWg6rqouZB8IdyteRlfpYYiFovkf67dIeOgWIUzTA==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -7114,6 +7112,8 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.27.1
       '@babel/helper-validator-identifier': 7.28.5
+
+  '@breezystack/lamejs@1.2.7': {}
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true

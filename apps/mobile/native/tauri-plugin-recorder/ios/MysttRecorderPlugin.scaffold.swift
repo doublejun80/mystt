@@ -10,7 +10,7 @@ import Foundation
 // - keep original audio until upload + hash verification completes
 //
 // The shared JSON contract lives in:
-// /Volumes/mac_dock/github/mystt/packages/audio-core/src/tauri-recorder.ts
+// packages/audio-core/src/tauri-recorder.ts
 
 final class MysttRecorderPluginScaffold {
   func startRecording() {

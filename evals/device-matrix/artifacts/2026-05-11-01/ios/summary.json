@@ -1,0 +1,54 @@
+{
+  "runId": "2026-05-11-01",
+  "lane": "ios-native",
+  "status": "blocked",
+  "claims": {
+    "iphoneSafariPublicPortalSmokeComplete": false,
+    "iosNativeBackgroundSurvivalComplete": false,
+    "realDeviceProofExists": false
+  },
+  "targets": [
+    {
+      "lane": "iphone-safari-portal",
+      "target": "iPhone Safari / https://mystt.doublejun.digital",
+      "status": "blocked",
+      "canClaimBackgroundSurvival": false,
+      "missingEvidence": [
+        "real iPhone model and iOS version",
+        "Safari portal screenshots",
+        "session id and upload/process result",
+        "source-audio MP3 download response"
+      ]
+    },
+    {
+      "lane": "ios-native",
+      "target": "iPhone dev-client or release-like native build",
+      "status": "blocked",
+      "canClaimBackgroundSurvival": false,
+      "missingEvidence": [
+        "real-device-screen-off-artifact",
+        "runtime-state-json",
+        "session-json",
+        "local-audio-path",
+        "checksum-md5",
+        "upload-queued-at",
+        "local-sha256",
+        "remote-sha256",
+        "remote-byte-length",
+        "upload-verified-at",
+        "build identifier"
+      ]
+    }
+  ],
+  "localOriginalRetentionGate": {
+    "contract": "canPruneLocalOriginalAudio",
+    "requiredBeforeCleanup": [
+      "localAudioPath",
+      "localSha256",
+      "remoteSha256 matching localSha256",
+      "remoteByteLength > 0",
+      "uploadVerifiedAt"
+    ]
+  },
+  "notes": "This run is a harness/ledger update only. It intentionally does not claim iPhone real-device background audio proof."
+}

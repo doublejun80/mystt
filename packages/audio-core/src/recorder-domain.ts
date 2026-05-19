@@ -49,6 +49,7 @@ export const recorderEvidenceKinds = [
   "permission",
   "input_selected",
   "recording_started",
+  "keep_awake",
   "app_state",
   "pause",
   "resume",
@@ -123,6 +124,60 @@ export interface RecorderDomainSnapshot {
   nativeScaffolds: NativeScaffoldFile[];
   progressSummary: string[];
   readyToShip: boolean;
+}
+
+export const mobileReleaseScreenOffSeconds = 120 * 60;
+
+export type MobileDeviceQaLane = "iphone-safari-portal" | "ios-native" | "android-native";
+
+export interface MobileDeviceQaAutomatedChecks {
+  runtimeStateJson?: string | null;
+  sessionJson?: string | null;
+  checksumMd5?: string | null;
+  localSha256?: string | null;
+  remoteSha256?: string | null;
+  remoteByteLength?: number | null;
+  uploadVerifiedAt?: string | null;
+  uploadQueuedAt?: string | null;
+  localAudioPath?: string | null;
+}
+
+export type MobileDeviceQaArtifactType =
+  | "screen-off-recording"
+  | "foreground-service-notification"
+  | "adb-logcat"
+  | "runtime-state-export"
+  | "session-json-export";
+
+export interface MobileDeviceQaRealDeviceArtifact {
+  type: MobileDeviceQaArtifactType;
+  path: string;
+  device: string;
+  buildId: string;
+  screenOffSeconds?: number | null;
+}
+
+export interface MobileDeviceQaEvidenceInput {
+  lane: MobileDeviceQaLane;
+  target: string;
+  automatedChecks: MobileDeviceQaAutomatedChecks;
+  realDeviceArtifacts: MobileDeviceQaRealDeviceArtifact[];
+}
+
+export interface MobileDeviceQaEvidenceResult {
+  lane: MobileDeviceQaLane;
+  target: string;
+  status: "pass" | "blocked";
+  canClaimBackgroundSurvival: boolean;
+  missingEvidence: string[];
+}
+
+export interface LocalOriginalAudioRetentionInput {
+  localAudioPath?: string | null;
+  localSha256?: string | null;
+  remoteSha256?: string | null;
+  remoteByteLength?: number | null;
+  uploadVerifiedAt?: string | null;
 }
 
 const phaseMeta: Record<
@@ -404,6 +459,108 @@ export function buildRecorderSurvivalSummary(
   };
 }
 
+export function evaluateMobileDeviceQaEvidence(
+  input: MobileDeviceQaEvidenceInput
+): MobileDeviceQaEvidenceResult {
+  const missingEvidence: string[] = [];
+
+  if (!input.automatedChecks.runtimeStateJson) {
+    missingEvidence.push("runtime-state-json");
+  }
+  if (!input.automatedChecks.sessionJson) {
+    missingEvidence.push("session-json");
+  }
+  if (!input.automatedChecks.checksumMd5) {
+    missingEvidence.push("checksum-md5");
+  }
+  if (!input.automatedChecks.localSha256) {
+    missingEvidence.push("local-sha256");
+  }
+  if (!input.automatedChecks.remoteSha256) {
+    missingEvidence.push("remote-sha256");
+  }
+  if (input.automatedChecks.localSha256 !== input.automatedChecks.remoteSha256) {
+    missingEvidence.push("matching-remote-sha256");
+  }
+  if (
+    typeof input.automatedChecks.remoteByteLength !== "number" ||
+    input.automatedChecks.remoteByteLength <= 0
+  ) {
+    missingEvidence.push("remote-byte-length");
+  }
+  if (!input.automatedChecks.uploadVerifiedAt) {
+    missingEvidence.push("upload-verified-at");
+  }
+  if (!input.automatedChecks.uploadQueuedAt) {
+    missingEvidence.push("upload-queued-at");
+  }
+  if (!input.automatedChecks.localAudioPath) {
+    missingEvidence.push("local-audio-path");
+  }
+
+  const requiresScreenOffProof = input.lane === "ios-native" || input.lane === "android-native";
+  const screenOffArtifacts = input.realDeviceArtifacts.filter(
+    (artifact) => artifact.type === "screen-off-recording"
+  );
+  const hasDescribedScreenOffArtifact = screenOffArtifacts.some(
+    (artifact) => Boolean(artifact.path) && Boolean(artifact.device)
+  );
+  const hasScreenOffBuildId = screenOffArtifacts.some(
+    (artifact) => Boolean(artifact.path) && Boolean(artifact.device) && Boolean(artifact.buildId)
+  );
+  const hasReleaseScreenOffArtifact = screenOffArtifacts.some(
+    (artifact) =>
+      Boolean(artifact.path) &&
+      Boolean(artifact.device) &&
+      Boolean(artifact.buildId) &&
+      (artifact.screenOffSeconds ?? 0) >= mobileReleaseScreenOffSeconds
+  );
+  const hasAndroidForegroundArtifact =
+    input.lane !== "android-native" ||
+    input.realDeviceArtifacts.some(
+      (artifact) =>
+        (artifact.type === "foreground-service-notification" || artifact.type === "adb-logcat") &&
+        Boolean(artifact.path) &&
+        Boolean(artifact.device) &&
+        Boolean(artifact.buildId)
+    );
+
+  if (requiresScreenOffProof) {
+    if (!hasDescribedScreenOffArtifact) {
+      missingEvidence.push("real-device-screen-off-artifact");
+    } else if (!hasScreenOffBuildId) {
+      missingEvidence.push("screen-off-build-id");
+    } else if (!hasReleaseScreenOffArtifact) {
+      missingEvidence.push("screen-off-seconds-7200");
+    }
+  }
+  if (!hasAndroidForegroundArtifact) {
+    missingEvidence.push("android-foreground-service-artifact");
+  }
+
+  const status = missingEvidence.length === 0 ? "pass" : "blocked";
+
+  return {
+    lane: input.lane,
+    target: input.target,
+    status,
+    canClaimBackgroundSurvival: status === "pass" && requiresScreenOffProof,
+    missingEvidence
+  };
+}
+
+export function canPruneLocalOriginalAudio(input: LocalOriginalAudioRetentionInput): boolean {
+  return Boolean(
+    input.localAudioPath &&
+      input.localSha256 &&
+      input.remoteSha256 &&
+      input.localSha256 === input.remoteSha256 &&
+      typeof input.remoteByteLength === "number" &&
+      input.remoteByteLength > 0 &&
+      input.uploadVerifiedAt
+  );
+}
+
 export function buildRecorderDomainSnapshot(input: {
   phase: RecorderPhase;
   session: SessionRecord;
@@ -421,7 +578,8 @@ export function buildRecorderDomainSnapshot(input: {
   const readyToShip =
     input.phase === "completed" &&
     uploadQueue.every((item) => item.status === "uploaded") &&
-    checklist.length > 0;
+    checklist.length > 0 &&
+    !buildRecorderSurvivalSummary(null).requiresRealDeviceProof;
 
   return {
     session,
