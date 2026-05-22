@@ -1,4 +1,7 @@
-import type { SessionRecord } from "@mystt/audio-core";
+import {
+  resolveGeneratedSessionTitleFromNotes,
+  type SessionRecord
+} from "@mystt/audio-core";
 import { modeLabels, statusLabels } from "@mystt/ui-kit";
 
 import type { SessionNotesRecord } from "./api";
@@ -76,6 +79,11 @@ export function decorateSessionRecord(
 
   return {
     ...session,
+    title:
+      resolveGeneratedSessionTitleFromNotes({
+        currentTitle: session.title,
+        notes
+      }) ?? session.title,
     summary: narrative.summary,
     decisions: narrative.decisions,
     actionItems: narrative.actionItems,
