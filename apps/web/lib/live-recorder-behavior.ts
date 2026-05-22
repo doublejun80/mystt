@@ -91,6 +91,15 @@ export type RecoverableArchiveLike = {
   isComplete: boolean;
 };
 
+export type AutoRecoverableArchivePhase =
+  | "idle"
+  | "requesting"
+  | "recording"
+  | "saving"
+  | "processing"
+  | "saved"
+  | "error";
+
 export function getUniqueAudioObjectUrls(state: AudioObjectUrlState) {
   return [
     ...new Set(
@@ -140,6 +149,28 @@ export function shouldAllowRecoverableArchiveUpload(
     Number.isSafeInteger(archive.lastSequence) &&
     archive.chunkCount > 0 &&
     archive.lastSequence === archive.chunkCount - 1
+  );
+}
+
+export function selectAutoRecoverableArchive(input: {
+  archives: RecoverableArchiveLike[];
+  phase: AutoRecoverableArchivePhase;
+  recoveringArchiveSessionId: string | null;
+  attemptedSessionIds: ReadonlySet<string>;
+}) {
+  if (
+    input.recoveringArchiveSessionId ||
+    (input.phase !== "idle" && input.phase !== "saved" && input.phase !== "error")
+  ) {
+    return null;
+  }
+
+  return (
+    input.archives.find(
+      (archive) =>
+        !input.attemptedSessionIds.has(archive.sessionId) &&
+        shouldAllowRecoverableArchiveUpload(archive)
+    ) ?? null
   );
 }
 

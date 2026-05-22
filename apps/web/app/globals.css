@@ -923,8 +923,9 @@ textarea {
 
 .transcriptFeedPrimary {
   min-height: 0;
-  max-height: none;
-  height: 100%;
+  height: clamp(340px, 52vh, 600px);
+  max-height: clamp(340px, 52vh, 600px);
+  overscroll-behavior: contain;
 }
 
 .transcriptLine {
@@ -1738,6 +1739,11 @@ textarea {
 
   .workspaceSurface {
     order: 2;
+  }
+
+  .transcriptFeedPrimary {
+    height: clamp(280px, 56vh, 460px);
+    max-height: clamp(280px, 56vh, 460px);
   }
 
   .recorderTopBar {

@@ -127,21 +127,23 @@ function getSessionArtifactDownloadHref(sessionId: string, kind: string) {
   return `/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodeURIComponent(kind)}`;
 }
 
-function getTopicTimeline(notes: MeetingNotesV2Record) {
-  return (
-    notes.topicTimeline?.map((item) => ({
+function getTopicReportSections(notes: MeetingNotesV2Record) {
+  if (notes.topicTimeline && notes.topicTimeline.length > 0) {
+    return notes.topicTimeline.map((item) => ({
       id: item.timelineId,
       title: item.title,
-      discussion: item.discussion,
-      outcome: item.outcome
-    })) ??
-    notes.topicSummaries.map((topic) => ({
-      id: topic.topicId,
-      title: topic.title,
-      discussion: topic.summaryBullets.join(" "),
-      outcome: null
-    }))
-  );
+      paragraphs: [
+        item.discussion,
+        item.outcome ? `결과/남은 쟁점: ${item.outcome}` : null
+      ].filter((paragraph): paragraph is string => Boolean(paragraph))
+    }));
+  }
+
+  return notes.topicSummaries.map((topic) => ({
+    id: topic.topicId,
+    title: topic.title,
+    paragraphs: topic.summaryBullets
+  }));
 }
 
 function ReportSummary({ notes }: { notes: MeetingNotesV2Record }) {
@@ -184,20 +186,21 @@ function ReportSummary({ notes }: { notes: MeetingNotesV2Record }) {
   );
 }
 
-function TopicTimeline({ notes }: { notes: MeetingNotesV2Record }) {
-  const timeline = getTopicTimeline(notes);
+function TopicReportSections({ notes }: { notes: MeetingNotesV2Record }) {
+  const topics = getTopicReportSections(notes);
 
-  if (timeline.length === 0) {
-    return <p className="emptyState">표시할 주제 흐름이 없습니다.</p>;
+  if (topics.length === 0) {
+    return <p className="emptyState">표시할 주제별 요약이 없습니다.</p>;
   }
 
   return (
     <ul className="detailList">
-      {timeline.map((item) => (
+      {topics.map((item) => (
         <li key={item.id}>
           <strong>{cleanUserText(item.title)}</strong>
-          <p>{cleanUserText(item.discussion)}</p>
-          {item.outcome ? <p>{`결과/남은 쟁점: ${cleanUserText(item.outcome)}`}</p> : null}
+          {item.paragraphs.map((paragraph) => (
+            <p key={paragraph}>{cleanUserText(paragraph)}</p>
+          ))}
         </li>
       ))}
     </ul>
@@ -311,16 +314,7 @@ export default async function SessionDetailPage({
               <p>{`키워드: ${notesV2.keywords.map(cleanUserText).join(", ")}`}</p>
             ) : null}
             {notesV2.reviewFlags.length > 0 ? (
-              <>
-                <h2 className="sectionTitle" style={{ marginTop: 24 }}>
-                  확인 필요 요약
-                </h2>
-                <ul className="detailList">
-                  {notesV2.reviewFlags.map((flag) => (
-                    <li key={`${flag.flagType}-${flag.message}`}>{cleanUserText(flag.message)}</li>
-                  ))}
-                </ul>
-              </>
+              <p>{`${notesV2.reviewFlags.length}개 항목은 아래 확인 필요 항목에서 따로 점검하세요.`}</p>
             ) : null}
           </article>
         ) : null}
@@ -393,7 +387,10 @@ export default async function SessionDetailPage({
           </article>
         ) : null}
 
-        {notesV2 && (notesV2.openIssues.length > 0 || notesV2.risks.length > 0) ? (
+        {notesV2 &&
+        (notesV2.openIssues.length > 0 ||
+          notesV2.risks.length > 0 ||
+          notesV2.reviewFlags.length > 0) ? (
           <article className="detailPanel">
             {notesV2.openIssues.length > 0 ? (
               <>
@@ -426,13 +423,34 @@ export default async function SessionDetailPage({
                 </ul>
               </>
             ) : null}
+
+            {notesV2.reviewFlags.length > 0 ? (
+              <>
+                <h2
+                  className="sectionTitle"
+                  style={{
+                    marginTop:
+                      notesV2.openIssues.length > 0 || notesV2.risks.length > 0 ? 24 : 0
+                  }}
+                >
+                  확인 필요 항목
+                </h2>
+                <ul className="detailList">
+                  {notesV2.reviewFlags.map((flag) => (
+                    <li key={`${flag.flagType}-${flag.message}`}>
+                      {cleanUserText(flag.message)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
           </article>
         ) : null}
 
         {notesV2 ? (
           <article className="detailPanel detailPanelWide">
-            <h2 className="sectionTitle">주제 흐름</h2>
-            <TopicTimeline notes={notesV2} />
+            <h2 className="sectionTitle">주제별 요약</h2>
+            <TopicReportSections notes={notesV2} />
           </article>
         ) : null}
 
@@ -494,24 +512,6 @@ export default async function SessionDetailPage({
               : cleanTranscriptText(transcriptPreview)}
           </div>
         </article>
-
-        {notesV2 && notesV2.topicSummaries.length > 0 ? (
-          <article className="detailPanel detailPanelWide">
-            <h2 className="sectionTitle">주제별 요약</h2>
-            <ul className="detailList">
-              {notesV2.topicSummaries.map((topic) => (
-                <li key={topic.topicId}>
-                  {cleanUserText(topic.title)}
-                  <ul className="detailList" style={{ marginTop: 8 }}>
-                    {topic.summaryBullets.map((bullet) => (
-                      <li key={bullet}>{cleanUserText(bullet)}</li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          </article>
-        ) : null}
 
         {showDiagnostics ? (
           <article className="detailPanel detailPanelWide">

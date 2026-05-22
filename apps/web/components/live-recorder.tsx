@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 
-import type { SessionMode, SessionStatus } from "@mystt/audio-core";
+import {
+  resolveGeneratedSessionTitle,
+  type SessionMode,
+  type SessionStatus
+} from "@mystt/audio-core";
 import { modeLabels } from "@mystt/ui-kit";
 import {
   RealtimeUtteranceBuffer,
@@ -22,7 +26,8 @@ import {
   type SessionNotesRecord,
   probeSonioxTempKey,
   previewSessionNotes,
-  transcribeRealtimeCaptionChunk
+  transcribeRealtimeCaptionChunk,
+  updatePortalSessionTitle
 } from "../lib/api";
 import { resolveDesktopDownloadUrl } from "../lib/desktop-download";
 import { finalizePortalRecording } from "../lib/finalize-portal-recording";
@@ -66,14 +71,14 @@ import {
   getTranscriptGroupBy,
   getUniqueAudioObjectUrls,
   normalizeRealtimeTokenText,
+  selectAutoRecoverableArchive,
   shouldAllowRecoverableArchiveUpload,
   shouldPersistStoppedRecording,
   splitRealtimeTokens,
   type AudioObjectUrlState
 } from "../lib/live-recorder-behavior";
 import {
-  buildIOSFocusShortcutUrl,
-  buildIOSShortcutReturnUrl,
+  buildIOSFocusShortcutLaunchUrl,
   canRunIOSFocusShortcutAction,
   getIOSFocusShortcutBrowserSupport,
   iosFocusStartShortcutName,
@@ -124,7 +129,7 @@ function isMeetingNotesV2(notes: SessionNotesRecord): notes is MeetingNotesV2Rec
   );
 }
 
-function getMeetingTopicTimeline(notes: MeetingNotesV2Record) {
+function getMeetingTopicReportSections(notes: MeetingNotesV2Record) {
   return (
     notes.topicTimeline?.map((item) => ({
       id: item.timelineId,
@@ -792,6 +797,7 @@ export function LiveRecorder({
   const archiveMimeTypeRef = useRef("");
   const archiveSessionIdRef = useRef<string | null>(null);
   const finalizedArchiveSessionIdRef = useRef<string | null>(null);
+  const autoRecoveryAttemptedSessionIdsRef = useRef(new Set<string>());
   const archiveSequenceRef = useRef(0);
   const archiveWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const archiveModeRef = useRef<"indexeddb" | "memory">("memory");
@@ -807,6 +813,7 @@ export function LiveRecorder({
   const liveLinesRef = useRef<TranscriptLine[]>([]);
   const browserLinesRef = useRef<TranscriptLine[]>([]);
   const browserLiveTextRef = useRef("");
+  const liveTranscriptScrollRef = useRef<HTMLDivElement | null>(null);
   const committedLineKeysRef = useRef(new Set<string>());
   const manualInputSelectionRef = useRef(false);
   const selectedInputDeviceIdRef = useRef("");
@@ -902,7 +909,10 @@ export function LiveRecorder({
       window.navigator.maxTouchPoints
     );
     const focusShortcutSupport = isiOSDevice
-      ? getIOSFocusShortcutBrowserSupport(window.navigator.userAgent)
+      ? getIOSFocusShortcutBrowserSupport(window.navigator.userAgent, {
+          hasChromeRuntime: "chrome" in window,
+          vendor: window.navigator.vendor
+        })
       : null;
     setIsLikelyIOSFocusDevice(isiOSDevice);
     setIOSFocusShortcutSupport(focusShortcutSupport);
@@ -1123,6 +1133,23 @@ export function LiveRecorder({
     };
   }, []);
 
+  useEffect(() => {
+    const archive = selectAutoRecoverableArchive({
+      archives: recoverableArchives,
+      phase,
+      recoveringArchiveSessionId,
+      attemptedSessionIds: autoRecoveryAttemptedSessionIdsRef.current
+    });
+
+    if (!archive) {
+      return;
+    }
+
+    autoRecoveryAttemptedSessionIdsRef.current.add(archive.sessionId);
+    setMessage("검증되지 않은 로컬 복구 archive를 자동으로 다시 업로드합니다.");
+    void uploadRecoverableArchive(archive);
+  }, [recoverableArchives, phase, recoveringArchiveSessionId]);
+
   function resetArchiveRecorderState() {
     archiveRecorderRef.current = null;
     archiveChunksRef.current = [];
@@ -1318,6 +1345,30 @@ export function LiveRecorder({
     } finally {
       resetArchiveRecorderState();
     }
+  }
+
+  async function discardVerifiedLocalArchive(sessionId: string) {
+    try {
+      await discardLiveRecordingArchive(sessionId);
+      await refreshRecoverableArchives();
+    } catch (error) {
+      setLastRealtimeError(
+        error instanceof Error
+          ? `검증 완료된 로컬 archive 정리 실패: ${error.message}`
+          : "검증 완료된 로컬 archive 정리에 실패했습니다."
+      );
+    }
+  }
+
+  async function discardFinalizedArchiveAfterVerifiedUpload() {
+    const finalizedArchiveSessionId = finalizedArchiveSessionIdRef.current;
+
+    if (!finalizedArchiveSessionId) {
+      return;
+    }
+
+    await discardVerifiedLocalArchive(finalizedArchiveSessionId);
+    finalizedArchiveSessionIdRef.current = null;
   }
 
   function setCommittedLines(nextLines: TranscriptLine[]) {
@@ -2010,6 +2061,34 @@ export function LiveRecorder({
     }
   }
 
+  async function updateSessionTitleFromGeneratedNotes(input: {
+    sessionId: string;
+    currentTitle: string;
+    notes?: SessionNotesRecord;
+  }) {
+    const generatedTitle = resolveGeneratedSessionTitle({
+      currentTitle: input.currentTitle,
+      generatedTitle: input.notes?.title
+    });
+
+    if (!generatedTitle) {
+      return;
+    }
+
+    try {
+      await updatePortalSessionTitle({
+        sessionId: input.sessionId,
+        title: generatedTitle
+      });
+    } catch (error) {
+      setLastRealtimeError(
+        error instanceof Error
+          ? `생성 제목 저장 실패: ${error.message}`
+          : "생성 제목 저장에 실패했습니다."
+      );
+    }
+  }
+
   async function pauseRecording() {
     if (phase !== "recording" || isPaused) {
       return;
@@ -2204,21 +2283,26 @@ export function LiveRecorder({
           blob: canonicalUploadBlob
         }),
         wait: true,
-        onSourceAudioUploaded: () => {
+        onSourceAudioUploaded: async () => {
           sourceAudioUploaded = true;
 
           setAudioUrl(getSessionSourceAudioPreviewHref(created.id));
           setAudioDownloadUrl(getSessionSourceAudioHref(created.id, { format: "mp3" }));
           setAudioDownloadName(buildDesktopDownloadFileName(nextAudioDownloadName));
           setAudioPreviewNote(null);
+          await discardFinalizedArchiveAfterVerifiedUpload();
         }
       });
       const finalizedArchiveSessionId = finalizedArchiveSessionIdRef.current;
       if (finalizedArchiveSessionId) {
-        await discardLiveRecordingArchive(finalizedArchiveSessionId).catch(() => undefined);
+        await discardVerifiedLocalArchive(finalizedArchiveSessionId);
         finalizedArchiveSessionIdRef.current = null;
-        void refreshRecoverableArchives();
       }
+      await updateSessionTitleFromGeneratedNotes({
+        sessionId: created.id,
+        currentTitle: created.title,
+        notes: snapshot.notes?.notes
+      });
 
       setLastSavedSessionId(created.id);
       if (snapshot.notes) {
@@ -2282,6 +2366,9 @@ export function LiveRecorder({
             ? `녹음 저장에 실패했습니다. ${error.message}`
             : "녹음 저장 또는 최종 전사/노트 생성에 실패했습니다."
       );
+      if (!sourceAudioUploaded) {
+        void refreshRecoverableArchives();
+      }
       void releaseScreenWakeLock();
     }
   }
@@ -2434,18 +2521,23 @@ export function LiveRecorder({
           blob: recoveredBlob
         }),
         wait: true,
-        onSourceAudioUploaded: () => {
+        onSourceAudioUploaded: async () => {
           sourceAudioUploaded = true;
 
           setAudioUrl(getSessionSourceAudioPreviewHref(created.id));
           setAudioDownloadUrl(getSessionSourceAudioHref(created.id, { format: "mp3" }));
           setAudioDownloadName("mystt-recovered-recording.mp3");
           setAudioPreviewNote(null);
+          await discardVerifiedLocalArchive(archive.sessionId);
         }
       });
 
-      await discardLiveRecordingArchive(archive.sessionId);
-      await refreshRecoverableArchives();
+      await discardVerifiedLocalArchive(archive.sessionId);
+      await updateSessionTitleFromGeneratedNotes({
+        sessionId: created.id,
+        currentTitle: created.title,
+        notes: snapshot.notes?.notes
+      });
       setLastSavedSessionId(created.id);
 
       if (snapshot.notes) {
@@ -2518,9 +2610,10 @@ export function LiveRecorder({
       return;
     }
 
-    const returnUrl = new URL(window.location.href);
-    returnUrl.searchParams.delete("debug");
-    const support = getIOSFocusShortcutBrowserSupport(window.navigator.userAgent);
+    const support = getIOSFocusShortcutBrowserSupport(window.navigator.userAgent, {
+      hasChromeRuntime: "chrome" in window,
+      vendor: window.navigator.vendor
+    });
     if (!support.canUseFocusShortcutRoundTrip) {
       setMessage(support.guidance);
       return;
@@ -2542,21 +2635,18 @@ export function LiveRecorder({
       return;
     }
 
-    const shortcutReturnUrl = buildIOSShortcutReturnUrl(
-      returnUrl.toString(),
-      window.navigator.userAgent
-    );
-    if (!shortcutReturnUrl) {
+    const shortcutLaunchUrl = buildIOSFocusShortcutLaunchUrl(kind, support);
+    if (!shortcutLaunchUrl) {
       setMessage(support.guidance);
       return;
     }
 
     setMessage(
       kind === "start"
-        ? "iPhone 단축어로 집중 모드를 켭니다. 단축어가 MYSTT로 돌아오면 녹음을 시작하세요."
+        ? "iPhone 단축어로 집중 모드를 켭니다. 단축어가 끝나면 MYSTT 탭으로 돌아와 녹음을 시작하세요."
         : "iPhone 단축어로 집중 모드를 해제합니다."
     );
-    window.location.assign(buildIOSFocusShortcutUrl(kind, shortcutReturnUrl));
+    window.location.assign(shortcutLaunchUrl);
   }
 
   const sonioxDisplayLines = [...transcriptLines, ...liveLines];
@@ -2573,6 +2663,23 @@ export function LiveRecorder({
       : browserDisplayLines;
   const effectiveTranscript = getEffectiveTranscript();
   const transcriptText = buildTranscriptText(displayLines);
+
+  useEffect(() => {
+    if (workspaceView !== "live") {
+      return;
+    }
+
+    const scrollTarget = liveTranscriptScrollRef.current;
+    if (!scrollTarget) {
+      return;
+    }
+
+    scrollTarget.scrollTo({
+      top: scrollTarget.scrollHeight,
+      behavior: "smooth"
+    });
+  }, [transcriptText, workspaceView]);
+
   const controlsDisabled =
     phase === "requesting" || phase === "recording" || phase === "saving";
   const desktopBridgeDownloadUrl =
@@ -3033,7 +3140,10 @@ export function LiveRecorder({
                   <strong>{activeModeProfile.liveTitle}</strong>
                   <span>{transcriptText ? `${transcriptText.length}자` : "대기 중"}</span>
                 </div>
-                <div className="workspaceScroll transcriptFeed transcriptFeedPrimary">
+                <div
+                  ref={liveTranscriptScrollRef}
+                  className="workspaceScroll transcriptFeed transcriptFeedPrimary"
+                >
                   {displayLines.length === 0 ? (
                     <p className="emptyState workspaceEmpty">
                       {activeModeProfile.liveEmpty}
@@ -3239,9 +3349,9 @@ export function LiveRecorder({
 
 	                    {isMeetingNotesV2(summaryPreview.notes) ? (
 	                      <section className="summaryBlock">
-	                        <strong>주제 흐름</strong>
+	                        <strong>주제별 요약</strong>
 	                        <ul className="compactList">
-	                          {getMeetingTopicTimeline(summaryPreview.notes).map((item) => (
+	                          {getMeetingTopicReportSections(summaryPreview.notes).map((item) => (
 	                            <li key={item.id}>
 	                              {cleanUserFacingText(item.title)}
 	                              <br />

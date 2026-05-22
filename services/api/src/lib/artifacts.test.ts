@@ -260,10 +260,29 @@ describe("artifact renderers", () => {
     expect(html).toContain("한 줄 결론");
     expect(html).toContain("회의 배경");
     expect(html).toContain("핵심 내용");
-    expect(html).toContain("주제 흐름");
     expect(html).toContain("구매는 추진하되 보안 검토");
     expect(html).toContain("주제별 요약");
+    expect(html).not.toContain("주제 흐름");
+    expect(html).not.toContain("<h2>주요 키워드</h2>");
     expect(html).not.toContain("시간대별");
+    const sectionOrder = [
+      "<h2>한 줄 결론</h2>",
+      "<h2>상세 보고용 요약</h2>",
+      "<h2>결정사항</h2>",
+      "<h2>액션아이템</h2>",
+      "<h2>미결사항</h2>",
+      "<h2>리스크</h2>",
+      "<h2>확인 필요 항목</h2>",
+      "<h2>주제별 요약</h2>"
+    ];
+    for (let index = 1; index < sectionOrder.length; index += 1) {
+      const previousSection = sectionOrder[index - 1];
+      const nextSection = sectionOrder[index];
+
+      expect(previousSection).toBeDefined();
+      expect(nextSection).toBeDefined();
+      expect(html.indexOf(previousSection!)).toBeLessThan(html.indexOf(nextSection!));
+    }
     expect(html).not.toContain("00:00-00:42");
     expect(html).not.toContain("00:00-00:05");
     expect(html).not.toContain("00:00-00:12");
@@ -301,6 +320,8 @@ describe("artifact renderers", () => {
       });
 
       expect(documentXml).not.toContain("관련 화자");
+      expect(documentXml).not.toContain("주제 흐름");
+      expect(documentXml).not.toContain("주요 키워드");
       expect(documentXml).not.toContain("시간대별");
       expect(documentXml).not.toContain("00:00-00:42");
       expect(documentXml).not.toContain("00:00-00:05");

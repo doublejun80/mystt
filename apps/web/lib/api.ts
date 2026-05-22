@@ -527,7 +527,17 @@ function shouldPreferJsonAudioUpload() {
 }
 
 function getBinaryUploadTimeoutMs(fileSize: number) {
-  return Math.min(Math.max(20_000, Math.ceil(fileSize / 128_000) * 1_000), 60_000);
+  const minimumTimeoutMs = 20_000;
+  const longRecordingByteThreshold = 64 * 1024 * 1024;
+  const longRecordingMinimumTimeoutMs = 30 * 60 * 1000;
+  const maxLongRecordingUploadTimeoutMs = 45 * 60 * 1000;
+  const expectedUploadMs = Math.ceil(fileSize / 64_000) * 1_000;
+  const uploadTimeoutMs =
+    fileSize >= longRecordingByteThreshold
+      ? Math.max(longRecordingMinimumTimeoutMs, expectedUploadMs)
+      : Math.max(minimumTimeoutMs, expectedUploadMs);
+
+  return Math.min(uploadTimeoutMs, maxLongRecordingUploadTimeoutMs);
 }
 
 function getJsonUploadTimeoutMs(fileSize: number) {

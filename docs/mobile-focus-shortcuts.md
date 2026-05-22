@@ -8,9 +8,9 @@ path uses Apple Shortcuts as a user-approved bridge.
 ## Platform Constraint
 
 Shortcuts can open URL schemes and can run a shortcut through
-`shortcuts://x-callback-url/run-shortcut`. Apple documents `x-success`,
-`x-cancel`, and `x-error` as URLs that open after the shortcut outcome, not as a
-guarantee that the caller's original browser tab is restored.
+`shortcuts://x-callback-url/run-shortcut`. MYSTT intentionally does not pass
+`x-success`, `x-cancel`, or `x-error` because iOS may open those HTTPS callback
+URLs in Safari when the shortcut was launched from another browser.
 
 Chromium documents `googlechrome://` and `googlechromes://` as Chrome-for-iOS URL
 schemes, but the documented behavior is opening the passed URL in Chrome, and
@@ -19,8 +19,9 @@ Chrome/MYSTT tab.
 
 Current product rule:
 
-- iPhone Safari: MYSTT may show the Shortcuts round-trip controls, with manual
-  real-device verification required before meeting use.
+- iPhone Safari: MYSTT may show the Shortcuts controls, with manual real-device
+  verification required before meeting use. Users may need to return to the
+  MYSTT tab manually after the Shortcuts app finishes.
 - iPhone Chrome: MYSTT must not show a false success control. Chrome users should
   open MYSTT in Safari for this helper, or turn Focus on/off from Control Center.
 - Other iPhone browsers and in-app WebViews: treat the Shortcuts round trip as
@@ -56,10 +57,9 @@ spaces, `+`, and Korean Unicode normalization.
    - Set Focus: turn off Do Not Disturb.
 
 Do not add an `Open URL` action inside these shortcuts. The web app calls them
-through `shortcuts://x-callback-url/run-shortcut` and passes the return URL with
-`x-success`, `x-cancel`, and `x-error`. Do not use `googlechromes://` as proof
-of returning to the original Chrome tab; Chrome round trip is treated as
-unsupported in the UI.
+through `shortcuts://x-callback-url/run-shortcut` without any callback URL. Do
+not use `googlechromes://` as proof of returning to the original Chrome tab;
+Chrome shortcut control is treated as unsupported in the UI.
 
 In iPhone Safari, enable `iPhone 보호`, then use:
 
@@ -93,10 +93,10 @@ revert the `ios-focus-shortcuts` helper and the recorder panel.
 ## Verification
 
 - Unit test: shortcut URL generation.
-- Manual iPhone Safari test: shortcut starts Focus, returns to the MYSTT tab,
-  and the user can start recording.
+- Manual iPhone Safari test: shortcut starts Focus, does not open a new Safari
+  tab from a callback URL, and the user can return to MYSTT to start recording.
 - Manual iPhone Safari test: shortcut turns Focus off after recording is saved or
-  canceled, without losing the MYSTT tab.
+  canceled, without opening a new Safari tab from a callback URL.
 - Manual iPhone Chrome test: MYSTT shows the unsupported/warning UI instead of
   a runnable Focus shortcut button.
 - Manual iPhone Chrome regression test: if an old build still exposes the

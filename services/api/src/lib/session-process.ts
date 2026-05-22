@@ -1,5 +1,6 @@
 import { normalizeSonioxTranscript } from "@mystt/transcript-normalizer";
 import { buildCleanupTargets } from "@mystt/soniox-client";
+import { resolveGeneratedSessionTitle } from "@mystt/audio-core";
 
 import { apiConfig } from "../config";
 import { generateStructuredNotes } from "./openai";
@@ -21,7 +22,8 @@ import {
   saveSourceAudio,
   saveStructuredNotes,
   saveTranscriptionMetadata,
-  updateSessionStatus
+  updateSessionStatus,
+  updateSessionTitle
 } from "./store";
 
 const SOURCE_AUDIO_FETCH_TIMEOUT_MS = 60_000;
@@ -629,6 +631,14 @@ export async function processSessionVerticalSlice(input: {
     transcript: normalizedTranscript,
     sessionTitle: session.title
   });
+  const generatedSessionTitle = resolveGeneratedSessionTitle({
+    currentTitle: session.title,
+    generatedTitle: notes.title
+  });
+
+  if (generatedSessionTitle) {
+    await updateSessionTitle(session.id, generatedSessionTitle);
+  }
 
   await updateSessionStatus(session.id, "emailing");
   await saveStructuredNotes(session.id, {

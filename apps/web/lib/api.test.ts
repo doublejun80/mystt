@@ -280,6 +280,50 @@ describe("uploadPortalSourceAudio", () => {
     );
   });
 
+  it("uses a long enough binary upload window for 30 minute recordings", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            data: {
+              sessionId: "session_1",
+              fileId: "11111111-1111-4111-8111-111111111111",
+              fileName: "long-meeting.webm",
+              byteLength: 180 * 1024 * 1024,
+              sha256: "deadbeef",
+              createdAt: "2026-05-09T14:40:00.000Z"
+            }
+          }),
+          {
+            status: 201,
+            headers: {
+              "content-type": "application/json"
+            }
+          }
+        )
+      );
+    const timeoutSpy = vi.spyOn(globalThis, "setTimeout");
+    const longRecordingBlob = new Blob(["audio"], { type: "audio/webm" });
+    Object.defineProperty(longRecordingBlob, "size", {
+      value: 180 * 1024 * 1024
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await uploadPortalSourceAudio({
+      sessionId: "session_1",
+      file: longRecordingBlob,
+      fileName: "long-meeting.webm"
+    });
+
+    const uploadTimeoutMs = timeoutSpy.mock.calls.find(
+      (call) => typeof call[1] === "number"
+    )?.[1];
+
+    expect(uploadTimeoutMs).toBeGreaterThanOrEqual(30 * 60 * 1000);
+  });
+
   it("falls back to base64 when both binary upload modes fail", async () => {
     const fetchMock = vi
       .fn()

@@ -124,6 +124,51 @@ export function createSessionRecord(input: {
   };
 }
 
+export function isGeneratedRecordingFallbackTitle(title: string): boolean {
+  const normalized = title.trim();
+
+  return (
+    /^빠른 녹음\s+(?:오전|오후)?\s*\d{1,2}:\d{2}(?::\d{2})?$/.test(normalized) ||
+    /^복구 녹음\s+\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\./.test(normalized)
+  );
+}
+
+function normalizeGeneratedSessionTitle(title: string, maxLength: number) {
+  const normalized = title
+    .replace(/^#+\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.length > maxLength
+    ? normalized.slice(0, Math.max(1, maxLength)).trimEnd()
+    : normalized;
+}
+
+export function resolveGeneratedSessionTitle(input: {
+  currentTitle: string;
+  generatedTitle?: string | null;
+  maxLength?: number;
+}): string | null {
+  if (!isGeneratedRecordingFallbackTitle(input.currentTitle)) {
+    return null;
+  }
+
+  const nextTitle = normalizeGeneratedSessionTitle(
+    input.generatedTitle ?? "",
+    input.maxLength ?? 140
+  );
+
+  if (!nextTitle || nextTitle === input.currentTitle.trim()) {
+    return null;
+  }
+
+  return nextTitle;
+}
+
 export function buildRollingChunkPlan(
   durationMinutes: number,
   chunkMinutes: number

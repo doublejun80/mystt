@@ -10,6 +10,7 @@ import {
   getRetiredAudioObjectUrls,
   getTranscriptGroupBy,
   normalizeRealtimeTokenText,
+  selectAutoRecoverableArchive,
   shouldAllowRecoverableArchiveUpload,
   shouldPersistStoppedRecording,
   splitRealtimeTokens
@@ -220,5 +221,53 @@ describe("live-recorder-behavior", () => {
         isComplete: true
       })
     ).toBe(false);
+  });
+
+  it("selects one complete archive for automatic recovery upload only when the recorder is idle", () => {
+    const completeArchive = {
+      sessionId: "complete",
+      mimeType: "audio/webm",
+      createdAt: "2026-05-17T10:00:00.000Z",
+      chunkCount: 3,
+      lastSequence: 2,
+      isComplete: true
+    };
+
+    expect(
+      selectAutoRecoverableArchive({
+        archives: [
+          {
+            sessionId: "gapped",
+            mimeType: "audio/webm",
+            createdAt: "2026-05-17T09:00:00.000Z",
+            chunkCount: 3,
+            lastSequence: 4,
+            isComplete: false
+          },
+          completeArchive
+        ],
+        phase: "idle",
+        recoveringArchiveSessionId: null,
+        attemptedSessionIds: new Set()
+      })
+    ).toEqual(completeArchive);
+
+    expect(
+      selectAutoRecoverableArchive({
+        archives: [completeArchive],
+        phase: "saving",
+        recoveringArchiveSessionId: null,
+        attemptedSessionIds: new Set()
+      })
+    ).toBeNull();
+
+    expect(
+      selectAutoRecoverableArchive({
+        archives: [completeArchive],
+        phase: "idle",
+        recoveringArchiveSessionId: null,
+        attemptedSessionIds: new Set(["complete"])
+      })
+    ).toBeNull();
   });
 });

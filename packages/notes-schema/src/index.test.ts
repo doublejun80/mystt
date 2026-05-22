@@ -193,6 +193,7 @@ describe("notes-schema", () => {
     expect(getNotesPrompt("meeting")).toContain(
       "Keep timestamps and evidence quotes only in JSON metadata fields"
     );
+    expect(getNotesPrompt("meeting")).toContain("주요 키워드");
     expect(getNotesPrompt("meeting")).toContain("Do not write literal null");
   });
 });

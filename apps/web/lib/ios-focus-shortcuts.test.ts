@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildIOSFocusShortcutLaunchUrl,
   buildIOSFocusShortcutUrl,
   buildIOSShortcutReturnUrl,
   canRunIOSFocusShortcutAction,
@@ -11,28 +12,18 @@ import {
 } from "./ios-focus-shortcuts";
 
 describe("ios-focus-shortcuts", () => {
-  it("builds a start shortcut URL with the return URL as text input", () => {
-    const url = new URL(
-      buildIOSFocusShortcutUrl("start", "https://mystt.doublejun.digital/?from=test")
-    );
+  it("builds a start shortcut URL without any browser return callback", () => {
+    const url = new URL(buildIOSFocusShortcutUrl("start"));
 
     expect(url.protocol).toBe("shortcuts:");
     expect(url.hostname).toBe("x-callback-url");
     expect(url.pathname).toBe("/run-shortcut");
     expect(url.searchParams.get("name")).toBe(iosFocusStartShortcutName);
-    expect(url.searchParams.get("x-success")).toBe(
-      "https://mystt.doublejun.digital/?from=test"
-    );
-    expect(url.searchParams.get("x-cancel")).toBe(
-      "https://mystt.doublejun.digital/?from=test"
-    );
-    expect(url.searchParams.get("x-error")).toBe(
-      "https://mystt.doublejun.digital/?from=test"
-    );
-    expect(buildIOSFocusShortcutUrl("start")).toContain(
-      "name=MYSTT_RECORDING_START"
-    );
-    expect(buildIOSFocusShortcutUrl("start")).not.toContain("+");
+    expect(url.searchParams.has("x-success")).toBe(false);
+    expect(url.searchParams.has("x-cancel")).toBe(false);
+    expect(url.searchParams.has("x-error")).toBe(false);
+    expect(url.toString()).toContain("name=MYSTT_RECORDING_START");
+    expect(url.toString()).not.toContain("+");
   });
 
   it("builds a stop shortcut URL without forcing an input payload", () => {
@@ -69,6 +60,65 @@ describe("ios-focus-shortcuts", () => {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 Version/18.5 Mobile/15E148 Safari/604.1"
       )
     ).toBe("https://mystt.doublejun.digital/?meeting=1");
+  });
+
+  it("does not treat iPhone Chrome as Safari when the UA looks Safari-compatible", () => {
+    const safariCompatibleChromeUserAgent =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 Version/18.5 Mobile/15E148 Safari/604.1";
+
+    expect(
+      getIOSFocusShortcutBrowserSupport(safariCompatibleChromeUserAgent, {
+        vendor: "Google Inc."
+      })
+    ).toEqual({
+      browser: "chrome",
+      canUseFocusShortcutRoundTrip: false,
+      guidance:
+        "iPhone Chrome에서는 Shortcuts 실행 후 원래 MYSTT 탭으로 돌아오는 경로를 보장할 수 없습니다. Safari에서 열거나 제어 센터에서 집중 모드를 직접 켜세요."
+    });
+
+    expect(
+      buildIOSShortcutReturnUrl(
+        "https://mystt.doublejun.digital/?meeting=1",
+        safariCompatibleChromeUserAgent,
+        { vendor: "Google Inc." }
+      )
+    ).toBeNull();
+
+    expect(
+      getIOSFocusShortcutBrowserSupport(safariCompatibleChromeUserAgent, {
+        hasChromeRuntime: true,
+        vendor: "Apple Computer, Inc."
+      })
+    ).toEqual({
+      browser: "chrome",
+      canUseFocusShortcutRoundTrip: false,
+      guidance:
+        "iPhone Chrome에서는 Shortcuts 실행 후 원래 MYSTT 탭으로 돌아오는 경로를 보장할 수 없습니다. Safari에서 열거나 제어 센터에서 집중 모드를 직접 켜세요."
+    });
+  });
+
+  it("launches iOS focus shortcuts without an x-success web URL", () => {
+    const safariSupport = getIOSFocusShortcutBrowserSupport(
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 Version/18.5 Mobile/15E148 Safari/604.1"
+    );
+
+    const launchUrl = buildIOSFocusShortcutLaunchUrl("stop", safariSupport);
+
+    expect(launchUrl).toBeTruthy();
+    const url = new URL(launchUrl ?? "");
+    expect(url.protocol).toBe("shortcuts:");
+    expect(url.searchParams.get("name")).toBe(iosFocusStopShortcutName);
+    expect(url.searchParams.has("x-success")).toBe(false);
+    expect(url.searchParams.has("x-cancel")).toBe(false);
+    expect(url.searchParams.has("x-error")).toBe(false);
+    expect(
+      buildIOSFocusShortcutLaunchUrl("start", {
+        browser: "chrome",
+        canUseFocusShortcutRoundTrip: false,
+        guidance: "blocked"
+      })
+    ).toBeNull();
   });
 
   it("does not treat unknown iOS WebKit browsers as Safari shortcut-safe", () => {

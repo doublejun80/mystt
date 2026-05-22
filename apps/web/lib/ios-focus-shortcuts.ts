@@ -18,6 +18,11 @@ export type IOSFocusShortcutBrowserSupport = {
   guidance: string;
 };
 
+export type IOSFocusShortcutBrowserContext = {
+  hasChromeRuntime?: boolean;
+  vendor?: string;
+};
+
 export function isLikelyIOSDevice(
   userAgent: string,
   platform: string,
@@ -29,30 +34,23 @@ export function isLikelyIOSDevice(
   );
 }
 
-export function buildIOSFocusShortcutUrl(
-  kind: IOSFocusShortcutKind,
-  returnUrl?: string
-) {
+export function buildIOSFocusShortcutUrl(kind: IOSFocusShortcutKind) {
   const name =
     kind === "start" ? iosFocusStartShortcutName : iosFocusStopShortcutName;
   const params = [`name=${encodeURIComponent(name)}`];
-
-  if (returnUrl) {
-    const encodedReturnUrl = encodeURIComponent(returnUrl);
-    params.push(
-      `x-success=${encodedReturnUrl}`,
-      `x-cancel=${encodedReturnUrl}`,
-      `x-error=${encodedReturnUrl}`
-    );
-  }
 
   return `shortcuts://x-callback-url/run-shortcut?${params.join("&")}`;
 }
 
 export function getIOSFocusShortcutBrowserSupport(
-  userAgent: string
+  userAgent: string,
+  context: IOSFocusShortcutBrowserContext = {}
 ): IOSFocusShortcutBrowserSupport {
-  if (/CriOS/i.test(userAgent)) {
+  if (
+    /CriOS|Chrome|Chromium/i.test(userAgent) ||
+    /google/i.test(context.vendor ?? "") ||
+    context.hasChromeRuntime
+  ) {
     return {
       browser: "chrome",
       canUseFocusShortcutRoundTrip: false,
@@ -91,15 +89,30 @@ export function getIOSFocusShortcutBrowserSupport(
   };
 }
 
-export function buildIOSShortcutReturnUrl(currentUrl: string, userAgent: string) {
+export function buildIOSShortcutReturnUrl(
+  currentUrl: string,
+  userAgent: string,
+  context: IOSFocusShortcutBrowserContext = {}
+) {
   const url = new URL(currentUrl);
-  const support = getIOSFocusShortcutBrowserSupport(userAgent);
+  const support = getIOSFocusShortcutBrowserSupport(userAgent, context);
 
   if (!support.canUseFocusShortcutRoundTrip) {
     return null;
   }
 
   return url.toString();
+}
+
+export function buildIOSFocusShortcutLaunchUrl(
+  kind: IOSFocusShortcutKind,
+  support?: IOSFocusShortcutBrowserSupport | null
+) {
+  if (!support?.canUseFocusShortcutRoundTrip) {
+    return null;
+  }
+
+  return buildIOSFocusShortcutUrl(kind);
 }
 
 export function canRunIOSFocusShortcutAction(input: {

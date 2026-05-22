@@ -10,7 +10,8 @@ const storeMocks = vi.hoisted(() => ({
   saveSourceAudio: vi.fn(),
   saveStructuredNotes: vi.fn(),
   saveTranscriptionMetadata: vi.fn(),
-  updateSessionStatus: vi.fn()
+  updateSessionStatus: vi.fn(),
+  updateSessionTitle: vi.fn()
 }));
 
 const sonioxMocks = vi.hoisted(() => ({
@@ -35,7 +36,8 @@ vi.mock("./store", async () => {
     saveSourceAudio: storeMocks.saveSourceAudio,
     saveStructuredNotes: storeMocks.saveStructuredNotes,
     saveTranscriptionMetadata: storeMocks.saveTranscriptionMetadata,
-    updateSessionStatus: storeMocks.updateSessionStatus
+    updateSessionStatus: storeMocks.updateSessionStatus,
+    updateSessionTitle: storeMocks.updateSessionTitle
   };
 });
 
@@ -61,6 +63,7 @@ import {
   processSessionVerticalSlice,
   waitForTerminalSessionSnapshot
 } from "./session-process";
+import { generateStructuredNotes } from "./openai";
 
 describe("processSessionVerticalSlice", () => {
   let sessionState: {
@@ -109,6 +112,28 @@ describe("processSessionVerticalSlice", () => {
     storeMocks.saveTranscriptionMetadata.mockResolvedValue(undefined);
     storeMocks.updateSessionStatus.mockImplementation(async (_sessionId, status) => {
       sessionState = { ...sessionState, status };
+    });
+    storeMocks.updateSessionTitle.mockImplementation(async (_sessionId, title) => {
+      sessionState = { ...sessionState, title };
+      return {
+        id: sessionState.id,
+        mode: sessionState.mode,
+        title: sessionState.title,
+        languageHints: sessionState.languageHints,
+        projectKey: sessionState.projectKey,
+        status: sessionState.status
+      };
+    });
+    vi.mocked(generateStructuredNotes).mockResolvedValue({
+      mode: "meeting",
+      title: "Weekly Sync",
+      summary: "ready",
+      decisions: [],
+      actionItems: [],
+      risks: [],
+      openQuestions: [],
+      nextAgenda: [],
+      speakerHighlights: []
     });
     sonioxMocks.cleanupAsyncTranscriptionResources.mockResolvedValue({
       cleanupTargets: [],
@@ -545,6 +570,37 @@ describe("processSessionVerticalSlice", () => {
         })
       }
     });
+  });
+
+  it("renames automatic recording titles from generated STT notes after summarization", async () => {
+    sessionState = {
+      ...sessionState,
+      title: "빠른 녹음 오후 7:12:30"
+    };
+    storeMocks.saveSourceAudio.mockResolvedValueOnce(undefined);
+    vi.mocked(generateStructuredNotes).mockResolvedValueOnce({
+      mode: "meeting",
+      title: "고객사 변경계약 협상 회의",
+      summary: "ready",
+      decisions: [],
+      actionItems: [],
+      risks: [],
+      openQuestions: [],
+      nextAgenda: [],
+      speakerHighlights: []
+    });
+
+    await processSessionVerticalSlice({
+      sessionId: "session_1",
+      audioUrl: "https://example.com/audio.m4a",
+      pollIntervalMs: 0,
+      timeoutMs: 250
+    });
+
+    expect(storeMocks.updateSessionTitle).toHaveBeenCalledWith(
+      "session_1",
+      "고객사 변경계약 협상 회의"
+    );
   });
 
   it("resumes an existing queued or processing transcription instead of creating a new job", async () => {

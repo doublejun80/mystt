@@ -155,21 +155,23 @@ function renderReportSummaryHtml(notes: MeetingNotesV2): string {
   `.trim();
 }
 
-function getTopicTimeline(notes: MeetingNotesV2) {
-  return (
-    notes.topicTimeline?.map((item) => ({
+function getTopicReportSections(notes: MeetingNotesV2) {
+  if (notes.topicTimeline && notes.topicTimeline.length > 0) {
+    return notes.topicTimeline.map((item) => ({
       id: item.timelineId,
       title: item.title,
-      discussion: item.discussion,
-      outcome: item.outcome
-    })) ??
-    notes.topicSummaries.map((topic) => ({
-      id: topic.topicId,
-      title: topic.title,
-      discussion: topic.summaryBullets.join(" "),
-      outcome: null
-    }))
-  );
+      paragraphs: [
+        item.discussion,
+        item.outcome ? `결과/남은 쟁점: ${item.outcome}` : null
+      ].filter((paragraph): paragraph is string => Boolean(paragraph))
+    }));
+  }
+
+  return notes.topicSummaries.map((topic) => ({
+    id: topic.topicId,
+    title: topic.title,
+    paragraphs: topic.summaryBullets
+  }));
 }
 
 function renderMeetingNotesV2Html(input: {
@@ -193,41 +195,6 @@ function renderMeetingNotesV2Html(input: {
       <section>
         <h2>상세 보고용 요약</h2>
         ${renderReportSummaryHtml(notes)}
-      </section>
-      <section>
-        <h2>주요 키워드</h2>
-        <p>${notes.keywords.map((keyword) => escapeUserHtml(keyword)).join(", ")}</p>
-      </section>
-      <section>
-        <h2>주제 흐름</h2>
-        ${getTopicTimeline(notes)
-          .map(
-            (item) => `
-              <section>
-                <h3>${escapeUserHtml(item.title)}</h3>
-                <p>${escapeUserHtml(item.discussion)}</p>
-                ${
-                  item.outcome
-                    ? `<p><strong>결과/남은 쟁점:</strong> ${escapeUserHtml(item.outcome)}</p>`
-                    : ""
-                }
-              </section>`
-          )
-          .join("") || "<p>주제 흐름이 없습니다.</p>"}
-      </section>
-      <section>
-        <h2>주제별 요약</h2>
-        ${notes.topicSummaries
-          .map(
-            (topic) => `
-              <section>
-                <h3>${escapeUserHtml(topic.title)}</h3>
-                <ul>${topic.summaryBullets
-                  .map((bullet) => `<li>${escapeUserHtml(bullet)}</li>`)
-                  .join("")}</ul>
-              </section>`
-          )
-          .join("") || "<p>주제별 요약이 없습니다.</p>"}
       </section>
       <section>
         <h2>결정사항</h2>
@@ -289,6 +256,20 @@ function renderMeetingNotesV2Html(input: {
               <p>${escapeUserHtml(flag.message)}</p>`
           )
           .join("") || "<p>확인 필요 항목이 없습니다.</p>"}
+      </section>
+      <section>
+        <h2>주제별 요약</h2>
+        ${getTopicReportSections(notes)
+          .map(
+            (topic) => `
+              <section>
+                <h3>${escapeUserHtml(topic.title)}</h3>
+                ${topic.paragraphs
+                  .map((paragraph) => `<p>${escapeUserHtml(paragraph)}</p>`)
+                  .join("")}
+              </section>`
+          )
+          .join("") || "<p>주제별 요약이 없습니다.</p>"}
       </section>
     </article>
   `.trim();
@@ -436,13 +417,18 @@ export async function renderSessionNotesDocx(input: {
           text: `모드: ${formatSessionMode(session.mode)} | 세션 ID: ${session.id} | 시작 시각: ${formatKoreanDateTime(session.startedAt)}`
         })
       ]
-    }),
-    new Paragraph({
-      text: "요약",
-      heading: HeadingLevel.HEADING_2
-    }),
-    new Paragraph({ text: cleanUserText(notes.summary) })
+    })
   ];
+
+  if (!isMeetingNotesV2(notes)) {
+    children.push(
+      new Paragraph({
+        text: "요약",
+        heading: HeadingLevel.HEADING_2
+      }),
+      new Paragraph({ text: cleanUserText(notes.summary) })
+    );
+  }
 
   if (notes.mode === "meeting") {
     if (isMeetingNotesV2(notes)) {
@@ -460,40 +446,13 @@ export async function renderSessionNotesDocx(input: {
             new Paragraph({ text: cleanUserText(notes.reportSummary.conclusion) })
           ]
         : [new Paragraph({ text: cleanUserText(notes.detailedSummary) })];
-      const topicTimeline = getTopicTimeline(notes);
+      const topicSections = getTopicReportSections(notes);
 
       children.push(
         new Paragraph({ text: "한 줄 결론", heading: HeadingLevel.HEADING_2 }),
         new Paragraph({ text: cleanUserText(notes.oneLineConclusion) }),
         new Paragraph({ text: "상세 보고용 요약", heading: HeadingLevel.HEADING_2 }),
         ...reportSummaryParagraphs,
-        new Paragraph({ text: "주요 키워드", heading: HeadingLevel.HEADING_2 }),
-        new Paragraph({ text: notes.keywords.map(cleanUserText).join(", ") }),
-        new Paragraph({ text: "주제 흐름", heading: HeadingLevel.HEADING_2 }),
-        ...(
-          topicTimeline.length > 0
-            ? topicTimeline.flatMap((item, index) => [
-                new Paragraph({
-                  text: `${index + 1}. ${cleanUserText(item.title)}`
-                }),
-                new Paragraph({ text: cleanUserText(item.discussion) }),
-                new Paragraph({
-                  text: `결과/남은 쟁점: ${cleanUserText(
-                    item.outcome ?? "명확히 확정된 결과 없음"
-                  )}`
-                })
-              ])
-            : [new Paragraph({ text: "주제 흐름이 없습니다." })]
-        ),
-        new Paragraph({ text: "주제별 요약", heading: HeadingLevel.HEADING_2 }),
-        ...(
-          notes.topicSummaries.length > 0
-            ? notes.topicSummaries.flatMap((topic, index) => [
-                new Paragraph({ text: `${index + 1}. ${cleanUserText(topic.title)}` }),
-                ...buildListParagraphs(topic.summaryBullets)
-              ])
-            : [new Paragraph({ text: "주제별 요약이 없습니다." })]
-        ),
         new Paragraph({ text: "결정사항", heading: HeadingLevel.HEADING_2 }),
         ...(
           notes.decisions.length > 0
@@ -553,6 +512,17 @@ export async function renderSessionNotesDocx(input: {
                   })
               )
             : [new Paragraph({ text: "확인 필요 항목이 없습니다." })]
+        ),
+        new Paragraph({ text: "주제별 요약", heading: HeadingLevel.HEADING_2 }),
+        ...(
+          topicSections.length > 0
+            ? topicSections.flatMap((topic, index) => [
+                new Paragraph({ text: `${index + 1}. ${cleanUserText(topic.title)}` }),
+                ...topic.paragraphs.map(
+                  (paragraph) => new Paragraph({ text: cleanUserText(paragraph) })
+                )
+              ])
+            : [new Paragraph({ text: "주제별 요약이 없습니다." })]
         )
       );
     } else {
