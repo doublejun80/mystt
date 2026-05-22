@@ -129,7 +129,7 @@ export function SessionHarness({
   const [error, setError] = useState<string | null>(initialError);
   const [search, setSearch] = useState("");
   const [visibleCount, setVisibleCount] = useState(8);
-  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(false);
+  const [isHistoryCollapsed, setIsHistoryCollapsed] = useState(true);
   const [preferences, setPreferences] = useState<RecorderPreferences>(
     defaultRecorderPreferences
   );
