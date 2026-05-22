@@ -9,6 +9,7 @@ import {
   canOpenRealtimeStream,
   createSessionRecord,
   isGeneratedRecordingFallbackTitle,
+  resolveGeneratedSessionTitleFromNotes,
   resolveGeneratedSessionTitle
 } from "./index";
 
@@ -205,8 +206,11 @@ describe("audio-core", () => {
 
   it("resolves STT-generated titles only for automatic recording fallback titles", () => {
     expect(isGeneratedRecordingFallbackTitle("빠른 녹음 오후 7:12:30")).toBe(true);
+    expect(isGeneratedRecordingFallbackTitle("빠른 녹음 2026. 5. 23. 오후 7:12:30")).toBe(true);
     expect(isGeneratedRecordingFallbackTitle("복구 녹음 2026. 5. 23. 오후 7:12:30")).toBe(true);
+    expect(isGeneratedRecordingFallbackTitle("복구 녹음 2026-05-23T10:20:30.000Z")).toBe(true);
     expect(isGeneratedRecordingFallbackTitle("빠른 녹음 제목 변경")).toBe(false);
+    expect(isGeneratedRecordingFallbackTitle("복구 녹음 제목 변경")).toBe(false);
 
     expect(
       resolveGeneratedSessionTitle({
@@ -219,6 +223,32 @@ describe("audio-core", () => {
       resolveGeneratedSessionTitle({
         currentTitle: "사용자가 입력한 제목",
         generatedTitle: "고객사 변경계약 협상 회의"
+      })
+    ).toBeNull();
+  });
+
+  it("prefers the generated report title when note title is still automatic", () => {
+    expect(
+      resolveGeneratedSessionTitleFromNotes({
+        currentTitle: "빠른 녹음 오후 7:12:30",
+        notes: {
+          title: "빠른 녹음 오후 7:12:30",
+          reportSummary: {
+            title: "고객사 변경계약 협상 회의"
+          }
+        }
+      })
+    ).toBe("고객사 변경계약 협상 회의");
+
+    expect(
+      resolveGeneratedSessionTitleFromNotes({
+        currentTitle: "사용자가 입력한 제목",
+        notes: {
+          title: "빠른 녹음 오후 7:12:30",
+          reportSummary: {
+            title: "고객사 변경계약 협상 회의"
+          }
+        }
       })
     ).toBeNull();
   });

@@ -190,6 +190,8 @@ describe("notes-schema", () => {
     expect(getNotesPrompt("meeting")).toContain("reportSummary");
     expect(getNotesPrompt("meeting")).toContain("topicTimeline");
     expect(getNotesPrompt("meeting")).toContain("Do not include raw segment ids");
+    expect(getNotesPrompt("meeting")).toContain("빠른 녹음");
+    expect(getNotesPrompt("meeting")).toContain("복구 녹음");
     expect(getNotesPrompt("meeting")).toContain(
       "Keep timestamps and evidence quotes only in JSON metadata fields"
     );

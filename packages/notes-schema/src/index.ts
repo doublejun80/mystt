@@ -263,6 +263,7 @@ export function getNotesPrompt(mode: SessionMode): string {
   const modeSpecific = {
     meeting: [
       "Create schemaVersion meeting_notes_v2.",
+      "If the provided Session title starts with 빠른 녹음 or 복구 녹음, treat it as an automatic placeholder and create title and reportSummary.title from transcript content only.",
       "Use Soniox as the meeting ledger: preserve speaker, time, confidence, language, and segment id evidence.",
       "Do not return a short three-line summary.",
       "executiveSummary must contain 5-8 bullets.",

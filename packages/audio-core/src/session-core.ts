@@ -126,10 +126,16 @@ export function createSessionRecord(input: {
 
 export function isGeneratedRecordingFallbackTitle(title: string): boolean {
   const normalized = title.trim();
+  const datePattern = String.raw`\d{4}(?:\s*년|[.\-/])\s*\d{1,2}(?:\s*월|[.\-/])\s*\d{1,2}`;
+  const timePattern = String.raw`(?:오전|오후)?\s*\d{1,2}:\d{2}(?::\d{2})?`;
 
   return (
-    /^빠른 녹음\s+(?:오전|오후)?\s*\d{1,2}:\d{2}(?::\d{2})?$/.test(normalized) ||
-    /^복구 녹음\s+\d{4}\.\s*\d{1,2}\.\s*\d{1,2}\./.test(normalized)
+    new RegExp(`^빠른 녹음\\s+(?:${timePattern}|${datePattern}.*)$`).test(
+      normalized
+    ) ||
+    new RegExp(`^복구 녹음\\s+(?:${timePattern}|${datePattern}.*)$`).test(
+      normalized
+    )
   );
 }
 
@@ -167,6 +173,33 @@ export function resolveGeneratedSessionTitle(input: {
   }
 
   return nextTitle;
+}
+
+export function resolveGeneratedSessionTitleFromNotes(input: {
+  currentTitle: string;
+  notes?: {
+    title?: string | null;
+    reportSummary?: {
+      title?: string | null;
+    } | null;
+  } | null;
+  maxLength?: number;
+}): string | null {
+  const candidates = [input.notes?.reportSummary?.title, input.notes?.title];
+
+  for (const candidate of candidates) {
+    const title = resolveGeneratedSessionTitle({
+      currentTitle: input.currentTitle,
+      generatedTitle: candidate,
+      maxLength: input.maxLength
+    });
+
+    if (title) {
+      return title;
+    }
+  }
+
+  return null;
 }
 
 export function buildRollingChunkPlan(

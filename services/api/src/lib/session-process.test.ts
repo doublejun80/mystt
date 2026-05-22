@@ -603,6 +603,61 @@ describe("processSessionVerticalSlice", () => {
     );
   });
 
+  it("renames automatic recording titles from the generated report title when notes keep the placeholder title", async () => {
+    sessionState = {
+      ...sessionState,
+      title: "빠른 녹음 2026. 5. 23. 오후 7:12:30"
+    };
+    storeMocks.saveSourceAudio.mockResolvedValueOnce(undefined);
+    vi.mocked(generateStructuredNotes).mockResolvedValueOnce({
+      schemaVersion: "meeting_notes_v2",
+      mode: "meeting",
+      title: "빠른 녹음 2026. 5. 23. 오후 7:12:30",
+      summary: "ready",
+      templateType: "purchase_review",
+      oneLineConclusion: "변경계약 협상 조건을 정리했다.",
+      executiveSummary: [
+        "변경계약 범위를 확인했다.",
+        "견적과 구매 절차를 논의했다.",
+        "BP 평가 기준을 점검했다.",
+        "전자서명 전 확인 사항을 정리했다.",
+        "담당자 확인이 필요하다."
+      ],
+      detailedSummary: "변경계약 협상과 구매 절차를 중심으로 논의했다.",
+      reportSummary: {
+        title: "고객사 변경계약 협상 회의",
+        introduction: "변경계약 범위와 구매 절차를 점검하기 위한 회의였다.",
+        keyPoints: [
+          "견적과 구매오더 흐름을 확인했다.",
+          "BP 평가와 결재 절차를 논의했다.",
+          "전자서명 전 확인 사항을 정리했다."
+        ],
+        conclusion: "변경계약 진행 전 확인 사항을 마무리해야 한다."
+      },
+      keywords: ["변경계약", "견적", "구매"],
+      topicTimeline: null,
+      topicSummaries: [],
+      decisions: [],
+      actionItems: [],
+      openIssues: [],
+      risks: [],
+      reviewFlags: [],
+      reportMarkdown: "## 한 줄 결론\n변경계약 협상 조건을 정리했다."
+    } as Awaited<ReturnType<typeof generateStructuredNotes>>);
+
+    await processSessionVerticalSlice({
+      sessionId: "session_1",
+      audioUrl: "https://example.com/audio.m4a",
+      pollIntervalMs: 0,
+      timeoutMs: 250
+    });
+
+    expect(storeMocks.updateSessionTitle).toHaveBeenCalledWith(
+      "session_1",
+      "고객사 변경계약 협상 회의"
+    );
+  });
+
   it("resumes an existing queued or processing transcription instead of creating a new job", async () => {
     storeMocks.getStoredTranscription.mockReturnValue({
       transcriptionId: "transcription_existing",

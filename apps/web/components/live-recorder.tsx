@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 
 import {
-  resolveGeneratedSessionTitle,
+  resolveGeneratedSessionTitleFromNotes,
   type SessionMode,
   type SessionStatus
 } from "@mystt/audio-core";
@@ -2066,9 +2066,9 @@ export function LiveRecorder({
     currentTitle: string;
     notes?: SessionNotesRecord;
   }) {
-    const generatedTitle = resolveGeneratedSessionTitle({
+    const generatedTitle = resolveGeneratedSessionTitleFromNotes({
       currentTitle: input.currentTitle,
-      generatedTitle: input.notes?.title
+      notes: input.notes
     });
 
     if (!generatedTitle) {
